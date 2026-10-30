@@ -6,6 +6,7 @@ VCM is a set of small Python packages that share one on-disk repository format (
 core -> file-parsers -> diff-engine / engineering-graph / validation -> ai-engine
                                                    traceability (devices, QR, fleet, NetBox)
                                                    workflow (release, rollback, PR, policy, timeline)
+                                                   mcp (agent tools, proposals)
                                                    vcm-cli, api
 ```
 
@@ -20,6 +21,7 @@ core -> file-parsers -> diff-engine / engineering-graph / validation -> ai-engin
 | `services/traceability` | `vcm_trace` | Device registry, signed passports, affected-device queries, QR encoder, racks and fleet queries, rack power, rollout planning, NetBox import |
 | `packages/workflow` | `vcm_workflow` | Release manifests, signing and verification, policies, rollback planner, pull-request records, timeline and explain |
 | `packages/vcm-cli` | `vcm_cli` | `vcm` command (argparse), plus the only two network fetchers (Redfish, NetBox), run only on explicit commands |
+| `services/mcp-server` | `vcm_mcp` | MCP server over stdio for AI agents: read-only tools, prompts, and the proposal workflow (a person approves any change an agent asks for) |
 | `services/api` | `vcm_api` | FastAPI REST API (token-authenticated, role-checked) and static dashboard |
 
 ## Storage
@@ -54,6 +56,17 @@ Each finding carries `evidence` entries of type `file` (path, hash, revision), `
 - **Component catalog**: project overrides in `vcm-catalog/`, user overrides in `~/.vcm/catalog/`, imported with `vcm catalog import`; reviews recorded with `vcm catalog review`.
 - **Policies**: `vcm-policy.json` committed with the design (see `vcm_workflow.policy`).
 - **Graph backend**: the graph is two tables (`nodes`, `edges`) keyed by revision. A PostgreSQL implementation of `EngineeringGraph` with the same methods is the intended production direction; it is not built.
+
+## Agents
+
+`vcm mcp` exposes VCM to an agent over the Model Context Protocol (JSON-RPC over stdio, newline
+delimited, no network). Tools return compact JSON; results over 60 kB are truncated with a note.
+Reads cannot change history, releases, records, refs, locks or the working tree (a test hashes all
+of them before and after calling every read tool); derived caches such as the SQLite graph may be
+refreshed. The one write tool, `vcm_propose`, queues a record in `.vcm/proposals/` and an audit
+event under the agent's identity. A person approves from the CLI or API; approval re-validates,
+then performs the action as that person. What an agent can never do, by construction: approve its
+own proposals, sign, record a catalog review, override policy, commit, push or lock.
 
 ## Security and trust notes
 

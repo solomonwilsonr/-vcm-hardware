@@ -184,3 +184,12 @@ stored.
 `require_observed_base`, `require_signed_release`), optional `stages` and optional `when`
 (`title_matches`, `severity_at_least`). Release manifests record
 `policy: {present, ok, violations, skipped, override?}`.
+
+## Proposals (`.vcm/proposals/P0001.json`)
+
+`id`, `action` (`release.create`, `pr.open`, `fleet.place`, `rack.define`, `device.register`),
+`args` (revisions already resolved to ids), `rationale`, `proposer` (`agent:<name>`), `status`
+(`pending`, `approved`, `rejected`), `created_at`, `summary`, `preview`; once decided,
+`decided_by`, `decided_at`, and `result` or `reason`. Audit actions: `proposal.create` (actor: the
+agent), `proposal.approve` and `proposal.reject` (actor: the person), plus the action's own events
+under the approver's name.

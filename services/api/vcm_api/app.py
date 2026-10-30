@@ -22,6 +22,9 @@ from vcm_core import Repository, VcmError
 from vcm_core.tokens import TokenStore, role_at_least
 from vcm_diff import diff_revisions, render_text
 from vcm_graph import build_graph
+from vcm_mcp import approve as approve_proposal
+from vcm_mcp import get_proposal, list_proposals
+from vcm_mcp import reject as reject_proposal
 from vcm_trace import (
     affected_by_component,
     affected_by_revision,
@@ -82,6 +85,10 @@ class ApprovalIn(BaseModel):
     by: str = ""
 
 
+class RejectIn(BaseModel):
+    reason: str = ""
+
+
 #: paths anyone may fetch: liveness, and the dashboard shell (which holds no repository data)
 _OPEN = ("/api/health",)
 
@@ -93,6 +100,8 @@ def required_role(method: str, path: str) -> str | None:
     if method in ("GET", "HEAD", "OPTIONS"):
         return "viewer"
     if path.startswith("/api/prs/") and path.endswith("/approvals"):
+        return "approver"
+    if path.startswith("/api/proposals/") and path.endswith(("/approve", "/reject")):
         return "approver"
     return "editor"
 
@@ -308,6 +317,28 @@ def create_app(repo_path: str | None = None, insecure: bool | None = None) -> Fa
     def fleet_rollout(to: str, release: str | None = None, max_per_rack: int = 1,
                       wave_size: int = 10):
         return plan_rollout(repo(), to, release, max_per_rack, wave_size)
+
+    @app.get("/api/proposals")
+    def proposals(status: str | None = None):
+        return list_proposals(repo(), status)
+
+    @app.get("/api/proposals/{pid}")
+    def proposal(pid: str):
+        return get_proposal(repo(), pid)
+
+    def _decider(request: Request) -> str:
+        who = request.state.identity
+        if who is None:  # insecure mode has no identity, so nothing here may be decided
+            raise HTTPException(403, "proposals can only be decided by an authenticated person")
+        return who["user"]
+
+    @app.post("/api/proposals/{pid}/approve")
+    def proposal_approve(pid: str, request: Request):
+        return approve_proposal(repo(), pid, _decider(request))
+
+    @app.post("/api/proposals/{pid}/reject")
+    def proposal_reject(pid: str, body: RejectIn, request: Request):
+        return reject_proposal(repo(), pid, _decider(request), body.reason)
 
     @app.get("/api/prs")
     def prs():

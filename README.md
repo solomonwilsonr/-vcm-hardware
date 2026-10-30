@@ -68,7 +68,8 @@ every unit whose change still has critical findings.
 | 17 | Change review records | `packages/workflow` | **Partial**: diff, impact, validation, comments, approvals, policy-aware readiness, identity via API tokens. No merge action |
 | 18 | Time machine (`timeline`, `explain`) | `packages/workflow` | **Implemented** |
 | 19 | CLI, REST API, dashboard | `packages/vcm-cli`, `services/api` | **Implemented**. The API requires a token (roles: viewer, editor, approver, admin) and refuses to start without one unless `--insecure` |
-| 20 | Integrations and apps: KiCad plugin, FreeCAD, Git bridge, web app, desktop app | `integrations/`, `apps/` | **Planned**: README stubs only |
+| 20 | Agent access: MCP server (stdio, offline) with read-only tools and a propose-then-human-approves write path | `services/mcp-server` (`vcm_mcp`) | **Implemented**. Tested over a real stdio subprocess; **not yet exercised with a live agent client**. No approval page in the dashboard yet |
+| 21 | Integrations and apps: KiCad plugin, FreeCAD, Git bridge, web app, desktop app | `integrations/`, `apps/` | **Planned**: README stubs only |
 
 ## Quickstart
 
@@ -151,6 +152,40 @@ vcm lock release gpu-node-01.node.json
 Divergent histories are reported with the way out (compare both sides, keep one, re-apply the
 other), never merged. Tags and records that differ between clones are listed as conflicts and left
 alone. Commits and pushes that touch a file someone else has locked are refused.
+
+### Let an AI agent use VCM (MCP)
+
+`vcm mcp` serves VCM over the Model Context Protocol on stdio. It runs offline, needs no API key,
+and opens no sockets. Point any MCP client at it, for example in `.mcp.json`:
+
+```json
+{"mcpServers": {"vcm": {"command": "vcm", "args": ["-C", "/path/to/repo", "mcp"],
+                        "env": {"VCM_AGENT_NAME": "claude"}}}}
+```
+
+The agent gets 20 read-only tools (diff, impact with confidence labels and evidence, drift against
+inline captures, catalog lookup, fleet query and recall, rack power, rollout plan, policy check,
+release and audit verification, passports, rollback) and two prompts (`review_change`,
+`fleet_upgrade_plan`). Its server instructions tell it to report each finding's confidence class and
+never upgrade it.
+
+It changes nothing itself. The single write tool, `vcm_propose`, records a **pending proposal** for
+one of five actions (create a release, open a review, place a unit, define a rack, register a unit).
+A person decides:
+
+```bash
+vcm proposal list --status pending
+vcm proposal show P0001
+vcm proposal approve P0001 --by dana     # performs it as dana, after re-checking it still holds
+vcm proposal reject P0001 --by dana --reason "not this quarter"
+```
+
+An agent cannot approve, and the person must differ from the proposer. Signing, catalog reviews
+(they record that a human checked a datasheet), policy overrides, commits, remotes and locks are
+**not proposable**: they stay human. Proposals are validated when made and again when approved; a
+release that policy would block cannot even be proposed. The audit log records the agent as
+proposer and the person as approver. The API exposes the same decision, needing an `approver`
+token.
 
 ### Policies and site rules
 
@@ -297,6 +332,11 @@ a named person against a cited source.
   the whole chain; signed releases anchor its head, which is what makes a rewrite detectable.
 - API identities come from tokens; there is no SSO, password login or per-object permission. Use
   HTTPS in front of it if it leaves localhost.
+- The MCP server is tested against the protocol (including a real stdio subprocess) but has not
+  been driven by a live agent client here. An agent's reasoning is only as good as VCM's data: it
+  inherits every limitation above, and an agent can still misread a result, which is why each
+  finding carries its confidence class and evidence. Proposals are approved from the CLI or API;
+  there is no dashboard page for them yet.
 - Integrations (KiCad, FreeCAD, Git bridge), the web app and the desktop app are not implemented.
 
 ## Repository map
@@ -312,6 +352,7 @@ services/ai-engine       impact rules, rule plugins, component catalog          
 services/validation      checks and evidence                                          (vcm_validation)
 services/traceability    units, passports, QR, fleet, NetBox                          (vcm_trace)
 services/api             FastAPI app + dashboard                                      (vcm_api)
+services/mcp-server      MCP server for agents, proposals                             (vcm_mcp)
 examples/gpu-node        sample node, v1.0 and v1.1, plus synthetic machine captures
 examples/plugins         example site rules
 examples/demo.sh         end-to-end node demo

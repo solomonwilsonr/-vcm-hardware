@@ -26,7 +26,7 @@ package-dir = { "" = "." }
 where = [
   "packages/core", "packages/file-parsers", "packages/diff-engine", "packages/workflow",
   "packages/vcm-cli", "services/engineering-graph", "services/ai-engine",
-  "services/validation", "services/traceability", "services/api",
+  "services/validation", "services/traceability", "services/api", "services/mcp-server",
 ]
 
 [tool.setuptools.package-data]
@@ -38,7 +38,7 @@ testpaths = ["tests"]
 pythonpath = [
   "packages/core", "packages/file-parsers", "packages/diff-engine", "packages/workflow",
   "packages/vcm-cli", "services/engineering-graph", "services/ai-engine",
-  "services/validation", "services/traceability", "services/api",
+  "services/validation", "services/traceability", "services/api", "services/mcp-server",
 ]
 
 [tool.ruff]
@@ -47,7 +47,8 @@ target-version = "py311"
 src = [
   "packages/core", "packages/file-parsers", "packages/diff-engine", "packages/workflow",
   "packages/vcm-cli", "services/engineering-graph", "services/ai-engine",
-  "services/validation", "services/traceability", "services/api", "tests",
+  "services/validation", "services/traceability", "services/api", "services/mcp-server",
+  "tests",
 ]
 
 [tool.ruff.lint]

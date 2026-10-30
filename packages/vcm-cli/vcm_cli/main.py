@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -26,6 +27,9 @@ from vcm_diff import compare_drift, diff_revisions, render_text
 from vcm_graph import build_graph, project_config
 from vcm_graph.backends.appwrite_backend import health as appwrite_health
 from vcm_graph.backends.appwrite_backend import provision as appwrite_provision
+from vcm_mcp import approve as approve_proposal
+from vcm_mcp import get_proposal, list_proposals, reject, serve
+from vcm_mcp.proposals import render as render_proposal
 from vcm_parsers import (
     design_from_revision,
     merge_observations,
@@ -623,6 +627,46 @@ def cmd_lock(args) -> int:
     return 0
 
 
+def cmd_mcp(args) -> int:
+    return serve(str(_repo(args).root))
+
+
+def cmd_proposal(args) -> int:
+    repo = _repo(args)
+    by = getattr(args, "by", None) or os.environ.get("VCM_AUTHOR", "")
+    if args.prop_cmd == "list":
+        items = list_proposals(repo, args.status)
+        if args.json:
+            _dump(items)
+        for p in items if not args.json else []:
+            print(f"{p['id']}  {p['status']:9} {p['action']:16} {p['proposer']}  "
+                  + ", ".join(f"{k}={v}" for k, v in sorted(p["args"].items()))[:70])
+        if not items and not args.json:
+            print("no proposals")
+        return 0
+    if args.prop_cmd == "show":
+        rec = get_proposal(repo, args.id)
+        _dump(rec) if args.json else print(render_proposal(rec))
+        return 0
+    if args.prop_cmd == "approve":
+        rec = get_proposal(repo, args.id)
+        print(render_proposal(rec))
+        if not args.yes:
+            if not sys.stdin.isatty():
+                print("refusing to approve without confirmation: re-run with --yes after "
+                      "reading the above", file=sys.stderr)
+                return 1
+            if input(f"Approve {args.id} as {by or '?'}? [y/N] ").strip().lower() != "y":
+                print("not approved")
+                return 1
+        rec = approve_proposal(repo, args.id, by)
+        print(f"approved {rec['id']} as {by}: {rec['result']}")
+        return 0
+    rec = reject(repo, args.id, by, args.reason)
+    print(f"rejected {rec['id']} as {by}")
+    return 0
+
+
 def cmd_audit(args) -> int:
     log = _repo(args).audit
     if args.audit_cmd == "verify":
@@ -1145,6 +1189,28 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--port", type=int, default=8000)
     s.add_argument("--insecure", action="store_true",
                    help="serve without authentication; only on a trusted network")
+
+    add("mcp", cmd_mcp, "serve VCM to an AI agent over MCP (stdio, offline, read-only plus proposals)")
+    pp = sub.add_parser("proposal", help="changes an agent has asked for; a person decides")
+    pp = pp.add_subparsers(dest="prop_cmd", required=True)
+    s = pp.add_parser("list")
+    s.set_defaults(fn=cmd_proposal)
+    s.add_argument("--status", choices=["pending", "approved", "rejected"])
+    s.add_argument("--json", action="store_true")
+    s = pp.add_parser("show")
+    s.set_defaults(fn=cmd_proposal)
+    s.add_argument("id")
+    s.add_argument("--json", action="store_true")
+    s = pp.add_parser("approve", help="perform the proposed action as you")
+    s.set_defaults(fn=cmd_proposal)
+    s.add_argument("id")
+    s.add_argument("--by", help="your name (default: $VCM_AUTHOR)")
+    s.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    s = pp.add_parser("reject")
+    s.set_defaults(fn=cmd_proposal)
+    s.add_argument("id")
+    s.add_argument("--by", help="your name (default: $VCM_AUTHOR)")
+    s.add_argument("--reason", default="")
 
     au = sub.add_parser("audit", help="hash-chained audit log")
     au = au.add_subparsers(dest="audit_cmd", required=True)

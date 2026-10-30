@@ -56,6 +56,18 @@
     catch (e) { /* not persisted; asked again next load */ }
   }
   let sessionToken = storedToken();
+  /* Several views load in parallel; every 401 waits on the same prompt rather than each asking. */
+  let tokenAsk = null;
+  function askToken() {
+    if (!tokenAsk) {
+      tokenAsk = Promise.resolve().then(() => {
+        const t = window.prompt("This VCM server requires an API token (create one with `vcm token create`):");
+        if (t && t.trim()) { sessionToken = t.trim(); storeToken(sessionToken); return true; }
+        return false;
+      }).finally(() => { setTimeout(() => { tokenAsk = null; }, 0); });
+    }
+    return tokenAsk;
+  }
 
   async function api(path, opts, retried) {
     const init = Object.assign({ headers: { accept: "application/json" } }, opts);
@@ -65,17 +77,15 @@
       init.body = JSON.stringify(init.json);
       delete init.json;
     }
-    if (sessionToken) {
-      init.headers = Object.assign({}, init.headers, { authorization: "Bearer " + sessionToken });
+    const sentWith = sessionToken;
+    if (sentWith) {
+      init.headers = Object.assign({}, init.headers, { authorization: "Bearer " + sentWith });
     }
     const r = await fetch(path, init);
     if (r.status === 401 && !retried) {
-      const t = window.prompt("This VCM server requires an API token (create one with `vcm token create`):");
-      if (t) {
-        sessionToken = t.trim();
-        storeToken(sessionToken);
-        return api(path, opts, true);
-      }
+      if (tokenAsk) await tokenAsk;
+      if (sessionToken && sessionToken !== sentWith) return api(path, opts, true);
+      if (await askToken()) return api(path, opts, true);
     }
     const ct = r.headers.get("content-type") || "";
     const payload = ct.includes("json") ? await r.json().catch(() => null) : await r.text();
@@ -855,8 +865,8 @@
       h("div", { class: "view-head" },
         h("h1", {}, "Releases and rollback"),
         h("p", {}, "A release pins every artefact by hash. Verification re-hashes the object " +
-          "store; it proves the manifest is internally consistent, not that it is authentic — " +
-          "releases are not signed yet.")),
+          "store, which proves the manifest is internally consistent; only a signature by a key " +
+          "in trustdb.json proves who vouched for it. Unsigned releases are marked as such.")),
       out,
       panel("Rollback planner", {}, h("div", { class: "toolbar" },
         field("Current", select("rb-cur", opts, S.cmp.b, null)),
@@ -915,8 +925,15 @@
             shortHash(p, 12)).join(", ") || "—"),
           h("dt", {}, "Created"), h("dd", {}, when(r.created_at)),
           h("dt", {}, "Manifest"), h("dd", { title: r.manifest_sha256 }, r.manifest_sha256),
-          h("dt", {}, "Signature"), h("dd", { style: "color:var(--fg-faint)" },
-            "not implemented")),
+          h("dt", {}, "Signature"), (r.signatures && r.signatures.length)
+            ? h("dd", {}, r.signatures.map((x) => x.signer + " (" + x.key_id + ")").join(", ") +
+                "  — run Verify to check against trustdb.json")
+            : h("dd", { style: "color:var(--fg-faint)" }, "unsigned"),
+          r.policy ? h("dt", {}, "Policy") : null,
+          r.policy ? h("dd", {}, !r.policy.present ? "no vcm-policy.json"
+            : r.policy.ok ? "passed"
+            : "OVERRIDDEN (" + r.policy.violations.join(", ") + "): " +
+              ((r.policy.override || {}).reason || "")) : null),
         h("dl", { class: "kv" },
           h("dt", {}, "vcm"), h("dd", {}, r.toolchain.vcm),
           h("dt", {}, "python"), h("dd", {}, r.toolchain.python),
@@ -975,7 +992,9 @@
           h("div", {},
             h("div", { class: "vtitle" }, p.fully_software_reversible
               ? "Fully reversible in software"
-              : "Not reversible in software — a hardware respin is required"),
+              : (p.respin_required || []).length
+                ? "Not reversible in software — " + (p.vocabulary || "platform change required")
+                : "Not reversible in software — physical rework is required"),
             h("div", { class: "vdetail" }, revShort(cur) + " → " + revShort(tgt) + ". " +
               plural(p.devices_not_at_target.length, "built unit") + " not at the target " +
               "revision."),
@@ -986,7 +1005,7 @@
         h("div", { class: "buckets" },
           bucket("soft", "Software reversible", p.software_reversible),
           bucket("rework", "Physical rework", p.physical_rework),
-          bucket("respin", "Respin required", p.respin_required)),
+          bucket("respin", p.vocabulary || "Platform change required", p.respin_required)),
         p.other && p.other.length
           ? panel("Other", { count: p.other.length },
               h("ul", {}, p.other.map((o) => h("li", {}, o.instruction || JSON.stringify(o)))))
@@ -1146,7 +1165,7 @@
     mount(main,
       h("div", { class: "view-head" },
         h("h1", {}, "History"),
-        h("p", {}, "First-parent revision history. No merges, no remotes.")),
+        h("p", {}, "First-parent revision history. No merges: remotes sync fast-forward only.")),
       panel("Timeline", { count: plural(S.revs.length, "revision"), flush: true },
         h("ol", { class: "timeline" }, items)),
       graphBox);

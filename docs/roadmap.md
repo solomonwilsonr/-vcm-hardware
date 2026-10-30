@@ -4,7 +4,22 @@ This is a proposed 12-week plan in four phases. Dates, scope and order are plann
 
 ## Where we are
 
-The MVP described in the README exists: local repositories, KiCad/BOM parsing, semantic diff, SQLite graph, rule-based impact analysis, validation evidence, releases, rollback planning, device traceability, local pull requests, CLI, REST API and dashboard.
+Done since the MVP: release and passport signing, a hash-chained audit log, API authentication with
+roles, Redfish and `nvidia-smi` import with drift detection and measured draw, more node rules with
+per-field catalog attribution and a review workflow, rule plugins, fleet queries, recalls, rack
+power and rollout waves, NetBox placement import, directory remotes with locks, policies as code,
+and a published impact-report schema. See the README table for exact scope.
+
+The phases below are the original proposal, kept for reference. Items already delivered are struck
+through only in spirit: read the README table, not this list, for what exists.
+
+Next, in order of credibility gained:
+
+1. Real captures from real BMCs and a real NetBox, replacing the synthetic samples, and fixes for
+   whatever they reveal.
+2. Human datasheet reviews of the catalog entries the demo relies on.
+3. Real KiCad fixtures (de-risks schematic net tracing).
+4. A network transport for remotes (S3 or Git-backed).
 
 ## Phase 1 (weeks 1-3): harden the engineering core
 

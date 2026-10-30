@@ -1,9 +1,0 @@
-{
-  "batch": "RACK-13",
-  "notes": "",
-  "qr_payload": "https://vcm.example.com/device/NODE-0003",
-  "registered_at": "2026-10-30T23:28:38Z",
-  "release": "R1.1",
-  "revision": "0df9e4048e766a50471a572a7b32ad18a0ca30700cf3abd6d3c6f4947cf25d5c",
-  "serial": "NODE-0003"
-}

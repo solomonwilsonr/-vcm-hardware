@@ -84,12 +84,12 @@ vcm release verify R1.1 --require-signature
 vcm commit -m "trust release-bot signing key" --author alice
 
 step "11c. Share through a remote: push, clone elsewhere, verify the clone"
-REMOTE="$WORK/../demo-remote.$$"
-vcm remote add origin "$REMOTE"
+SHARE="$(mktemp -d)"
+trap 'rm -rf "$SHARE"' EXIT
+vcm remote add origin "$SHARE/remote"
 vcm push origin
-vcm clone "$REMOTE" "$WORK/../demo-clone.$$"
-(cd "$WORK/../demo-clone.$$" && vcm release verify R1.1 && vcm log)
-rm -rf "$REMOTE" "$WORK/../demo-clone.$$"
+vcm clone "$SHARE/remote" "$SHARE/clone"
+(cd "$SHARE/clone" && vcm release verify R1.1 && vcm log)
 
 step "11d. Lock a file instead of merging it"
 vcm lock firmware/driver.conf --holder alice --note "driver bump"

@@ -81,3 +81,8 @@ def test_timeline_explain_and_dashboard(client):
     assert "What changed" in client.get("/api/explain", params={"a": "v1.0", "b": "v1.1"}).json()["text"]
     page = client.get("/")
     assert page.status_code == 200 and "Every hardware revision has a story" in page.text
+
+
+def test_api_rejects_path_traversal(client):
+    r = client.get("/api/releases/..%2Fsecret")
+    assert r.status_code in (400, 404)

@@ -288,14 +288,19 @@ class Repository:
         return {**data, "_evidence": hist[-1]}
 
     # ---- named JSON records (releases, devices, pull requests) -----
+    def _record_path(self, kind: str, name: str) -> Path:
+        if not name or name.startswith(".") or any(c in name for c in "/\\\0"):
+            raise VcmError(f"invalid {kind[:-1]} name: {name!r}")
+        return self.dir / kind / f"{name}.json"
+
     def save_record(self, kind: str, name: str, data: dict) -> Path:
-        p = self.dir / kind / f"{name}.json"
+        p = self._record_path(kind, name)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
         return p
 
     def load_record(self, kind: str, name: str) -> dict:
-        p = self.dir / kind / f"{name}.json"
+        p = self._record_path(kind, name)
         if not p.is_file():
             raise VcmError(f"no such {kind[:-1]}: {name}")
         return json.loads(p.read_text())

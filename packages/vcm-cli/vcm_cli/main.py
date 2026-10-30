@@ -151,10 +151,10 @@ def cmd_impact(args) -> int:
 
 
 def cmd_bom_validate(args) -> int:
-    repo = _repo(args)
     if args.path:
         issues = check_bom_text(Path(args.path).read_text(), args.path)
     else:
+        repo = _repo(args)
         rev = repo.get_revision(args.rev)
         issues = []
         for p, art in rev.artifacts.items():

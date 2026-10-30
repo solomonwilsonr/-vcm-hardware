@@ -93,3 +93,12 @@ def test_discover(repo):
     sub = repo.root / "x" / "y"
     sub.mkdir(parents=True)
     assert Repository.discover(sub).root == repo.root
+
+
+def test_record_names_cannot_escape(repo):
+    (repo.dir / "secret.json").write_text("{}")
+    for bad in ("../secret", "a/b", ".hidden", ""):
+        with pytest.raises(VcmError):
+            repo.load_record("releases", bad)
+    repo.save_record("releases", "ok", {"name": "ok"})
+    assert repo.load_record("releases", "ok") == {"name": "ok"}

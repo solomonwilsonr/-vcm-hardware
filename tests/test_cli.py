@@ -94,3 +94,10 @@ def test_release_verify_fails_on_tamper(cli_repo, capsys):
     p.write_bytes(b"x")
     code, out = run(capsys, cli_repo, "release", "verify", "R1")
     assert code == 1 and "VERIFICATION FAILED" in out
+
+
+def test_bom_validate_file_needs_no_repository(tmp_path, capsys):
+    good = tmp_path / "bom.csv"
+    good.write_text("Reference,Value,Footprint\nR1,1k,R_0603\n")
+    assert main(["-C", str(tmp_path), "bom", "validate", str(good)]) == 0
+    assert "status: pass" in capsys.readouterr().out

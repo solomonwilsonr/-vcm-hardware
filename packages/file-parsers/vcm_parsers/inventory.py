@@ -15,6 +15,7 @@ Observation shape (``vcm-observed/1``)::
      "telemetry": {"node_power_w": [3010.0, 3125.5], "gpu_power_w": {"0": [301.2]}}}
 
 ``covers`` matters: a type a source never reports must not be read as "missing" when comparing.
+It is computed from what the source actually returned, never assumed.
 """
 from __future__ import annotations
 
@@ -27,8 +28,7 @@ import xml.etree.ElementTree as ET
 SCHEMA = "vcm-observed/1"
 
 #: component types each source can observe; drift checks are limited to these
-REDFISH_COVERS = ("cpu", "gpu", "dimm", "psu", "nic", "nvme", "disk")
-NVSMI_COVERS = ("gpu",)
+REDFISH_TYPES = ("cpu", "gpu", "dimm", "psu", "nic", "nvme", "disk")
 
 
 def empty(source: str, covers: tuple[str, ...] = ()) -> dict:
@@ -68,39 +68,109 @@ def _component(kind: str, body: dict, **props) -> dict:
             "slot": _slot(body), "props": {k: v for k, v in props.items() if v not in (None, "")}}
 
 
-def parse_redfish(capture: dict | str) -> dict:
-    """Parse a Redfish capture: ``{"resources": {uri: body}}`` or a bare ``{uri: body}`` map."""
-    data = json.loads(capture) if isinstance(capture, str) else capture
-    resources = data.get("resources", data) if isinstance(data, dict) else {}
-    obs = empty("redfish", REDFISH_COVERS)
-    power_samples: list[float] = []
+#: resource kinds ``parse_redfish`` reads; everything else is counted in the report, not dropped
+#: silently
+RECOGNISED_KINDS = ("ComputerSystem", "Manager", "Processor", "Memory", "PowerSupply", "Power",
+                    "EnvironmentMetrics", "NetworkAdapter", "Drive", "SoftwareInventory")
 
-    for _uri, body in sorted(resources.items()):
+
+def _norm(uri) -> str:
+    return str(uri).rstrip("/")
+
+
+def _links_fetched(body: dict, key: str, resources: dict) -> bool:
+    """True if every member the resource lists was captured intact (an empty list counts)."""
+    members = body.get(key)
+    if not isinstance(members, list):
+        return False
+    for m in members:
+        uri = _norm(m.get("@odata.id", "")) if isinstance(m, dict) else ""
+        got = resources.get(uri)
+        if not isinstance(got, dict) or "_error" in got:
+            return False
+    return True
+
+
+def parse_redfish(capture: dict | str, report: dict | None = None) -> dict:
+    """Parse a Redfish capture: ``{"resources": {uri: body}}`` or a bare ``{uri: body}`` map.
+
+    ``covers`` lists only the component types this capture can actually vouch for: ones it
+    contains, or whose whole collection it captured (even if empty). A BMC that does not expose
+    memory must not make every declared DIMM look missing. Pass a dict as ``report`` to also get
+    what was read, what was ignored and what could not be fetched (see ``vcm_parsers.diagnose``).
+    """
+    data = json.loads(capture) if isinstance(capture, str) else capture
+    raw = data.get("resources", data) if isinstance(data, dict) else {}
+    resources = {_norm(k): v for k, v in raw.items()}
+    obs = empty("redfish")
+    power_samples: list[float] = []
+    rep = report if report is not None else {}
+    rep.update(source="redfish", resources=len(resources), recognised={}, ignored={},
+               fetch_errors=[], absent_skipped=0, systems=0, non_object=0,
+               collections_complete=[], not_covered={})
+    complete: set[str] = set()   # types proven covered by a fully captured collection
+
+    for uri, body in sorted(resources.items()):
         if not isinstance(body, dict):
+            rep["non_object"] += 1
+            continue
+        if "_error" in body:
+            rep["fetch_errors"].append({"uri": uri, "error": str(body["_error"])[:200]})
             continue
         kind = _odata_kind(body)
+        if kind in RECOGNISED_KINDS:
+            rep["recognised"][kind] = rep["recognised"].get(kind, 0) + 1
+        elif kind:
+            ign = rep["ignored"].setdefault(kind, {"count": 0, "examples": []})
+            ign["count"] += 1
+            if len(ign["examples"]) < 3:
+                ign["examples"].append(uri)
         if kind == "ComputerSystem":
+            rep["systems"] += 1
             obs["node"] = obs["node"] or _clean(body.get("HostName") or body.get("Id"))
             if body.get("BiosVersion"):
                 obs["firmware"]["bios"] = _clean(body["BiosVersion"])
         elif kind == "Manager" and body.get("FirmwareVersion"):
             obs["firmware"].setdefault("bmc", _clean(body["FirmwareVersion"]))
-        elif kind == "Processor" and not _absent(body):
+        elif kind == "ProcessorCollection" and _links_fetched(body, "Members", resources):
+            complete.add("cpu")
+        elif kind == "MemoryCollection" and _links_fetched(body, "Members", resources):
+            complete.add("dimm")
+        elif kind == "NetworkAdapterCollection" and _links_fetched(body, "Members", resources):
+            complete.add("nic")
+        elif kind == "PowerSupplyCollection" and _links_fetched(body, "Members", resources):
+            complete.add("psu")
+        elif kind == "Storage" and _links_fetched(body, "Drives", resources):
+            complete.update(("nvme", "disk"))
+        elif kind == "Processor":
+            if _absent(body):
+                rep["absent_skipped"] += 1
+                continue
             ptype = str(body.get("ProcessorType", "CPU")).upper()
             obs["components"].append(_component(
                 "cpu" if ptype == "CPU" else "gpu", body,
                 cores=body.get("TotalCores"), max_speed_mhz=body.get("MaxSpeedMHz")))
-        elif kind == "Memory" and not _absent(body):
+        elif kind == "Memory":
+            if _absent(body):
+                rep["absent_skipped"] += 1
+                continue
             mib = body.get("CapacityMiB")
             obs["components"].append(_component(
                 "dimm", body, capacity_gb=round(mib / 1024) if mib else None,
                 memory_type=_clean(body.get("MemoryDeviceType")),
                 speed_mhz=body.get("OperatingSpeedMhz")))
-        elif kind == "PowerSupply" and not _absent(body):
+        elif kind == "PowerSupply":
+            if _absent(body):
+                rep["absent_skipped"] += 1
+                continue
             obs["components"].append(_component("psu", body, watts=body.get("PowerCapacityWatts")))
         elif kind == "Power":
+            if isinstance(body.get("PowerSupplies"), list):
+                complete.add("psu")   # the legacy Power resource lists every supply, even none
             for psu in body.get("PowerSupplies") or []:
-                if not _absent(psu):
+                if _absent(psu):
+                    rep["absent_skipped"] += 1
+                else:
                     obs["components"].append(_component("psu", psu,
                                                          watts=psu.get("PowerCapacityWatts")))
             for ctl in body.get("PowerControl") or []:
@@ -110,9 +180,15 @@ def parse_redfish(capture: dict | str) -> dict:
             reading = (body.get("PowerWatts") or {}).get("Reading")
             if reading is not None:
                 power_samples.append(float(reading))
-        elif kind == "NetworkAdapter" and not _absent(body):
+        elif kind == "NetworkAdapter":
+            if _absent(body):
+                rep["absent_skipped"] += 1
+                continue
             obs["components"].append(_component("nic", body))
-        elif kind == "Drive" and not _absent(body):
+        elif kind == "Drive":
+            if _absent(body):
+                rep["absent_skipped"] += 1
+                continue
             proto = str(body.get("Protocol", "")).lower()
             cap = body.get("CapacityBytes")
             obs["components"].append(_component(
@@ -123,6 +199,21 @@ def parse_redfish(capture: dict | str) -> dict:
             obs["firmware"].setdefault(f"inventory:{name}", _clean(body["Version"]))
     if power_samples:
         obs["telemetry"]["node_power_w"] = power_samples
+    seen = {c["type"] for c in obs["components"]}
+    covers = seen | complete
+    if covers & {"nvme", "disk"}:
+        covers |= {"nvme", "disk"}   # drives are enumerated together: seeing any means all
+    obs["covers"] = sorted(covers)
+    why = {"cpu": "no Processor of type CPU and no complete ProcessorCollection",
+           "gpu": "no Processor of type GPU: Redfish often does not list GPUs, use nvidia-smi",
+           "dimm": "no Memory resources and no complete MemoryCollection",
+           "psu": "no PowerSupply resources and no Power resource listing supplies",
+           "nic": "no NetworkAdapter resources and no complete NetworkAdapterCollection",
+           "nvme": "no NVMe Drive and no Storage resource with every drive captured",
+           "disk": "no Drive and no Storage resource with every drive captured"}
+    rep["not_covered"] = {t: w for t, w in why.items() if t not in covers}
+    rep["collections_complete"] = sorted(complete)
+    rep["components"] = {t: sum(c["type"] == t for c in obs["components"]) for t in sorted(seen)}
     return obs
 
 
@@ -131,14 +222,30 @@ def _csv_key(header: str) -> str:
     return re.sub(r"\s*\[.*?\]\s*", "", header).strip().lower()
 
 
-def parse_nvidia_smi_csv(text: str) -> dict:
+#: nvidia-smi --query-gpu columns the parser reads
+NVSMI_COLUMNS = ("index", "name", "serial", "pci.bus_id", "driver_version", "power.draw",
+                 "power.limit", "pcie.link.gen.max", "pcie.link.width.max")
+
+
+def _nvsmi_report(rep: dict, fmt: str) -> dict:
+    rep.update(source="nvidia-smi", format=fmt, rows=0, columns=[], unread_columns=[],
+               missing_columns=[], gpus=0, unnamed=0, not_covered={})
+    return rep
+
+
+def parse_nvidia_smi_csv(text: str, report: dict | None = None) -> dict:
     """``nvidia-smi --query-gpu=index,name,serial,pci.bus_id,driver_version,power.draw,...
-    --format=csv`` output (with header)."""
-    obs = empty("nvidia-smi", NVSMI_COVERS)
+    --format=csv`` output (with header). ``covers`` is ``gpu`` only if a GPU was listed."""
+    obs = empty("nvidia-smi")
+    rep = _nvsmi_report(report if report is not None else {}, "csv")
     rows = list(csv.reader(io.StringIO(text.strip()), skipinitialspace=True))
     if not rows:
+        rep["not_covered"] = {"gpu": "nvidia-smi output was empty"}
         return obs
     keys = [_csv_key(h) for h in rows[0]]
+    rep.update(rows=len(rows) - 1, columns=keys,
+               unread_columns=[k for k in keys if k not in NVSMI_COLUMNS],
+               missing_columns=[c for c in NVSMI_COLUMNS if c not in keys])
     gpu_power: dict[str, list[float]] = {}
     for row in rows[1:]:
         rec = dict(zip(keys, (c.strip() for c in row), strict=False))
@@ -161,6 +268,12 @@ def parse_nvidia_smi_csv(text: str) -> dict:
                 if v not in (None, "")}})
     if gpu_power:
         obs["telemetry"]["gpu_power_w"] = gpu_power
+    rep["gpus"] = len(obs["components"])
+    rep["unnamed"] = sum(1 for c in obs["components"] if not c["model"])
+    if obs["components"]:
+        obs["covers"] = ["gpu"]
+    else:
+        rep["not_covered"] = {"gpu": "no GPU rows in the nvidia-smi output"}
     return obs
 
 
@@ -169,9 +282,10 @@ def _xt(el, path: str) -> str:
     return (found.text or "").strip() if found is not None and found.text else ""
 
 
-def parse_nvidia_smi_xml(text: str) -> dict:
+def parse_nvidia_smi_xml(text: str, report: dict | None = None) -> dict:
     """``nvidia-smi -q -x`` output."""
-    obs = empty("nvidia-smi", NVSMI_COVERS)
+    obs = empty("nvidia-smi")
+    rep = _nvsmi_report(report if report is not None else {}, "xml")
     root = ET.fromstring(text)
     if _xt(root, "driver_version"):
         obs["firmware"]["gpu_driver"] = _xt(root, "driver_version")
@@ -199,11 +313,20 @@ def parse_nvidia_smi_xml(text: str) -> dict:
                 }.items() if v not in (None, "")}})
     if gpu_power:
         obs["telemetry"]["gpu_power_w"] = gpu_power
+    rep["gpus"] = len(obs["components"])
+    rep["rows"] = rep["gpus"]
+    rep["unnamed"] = sum(1 for c in obs["components"] if not c["model"])
+    if obs["components"]:
+        obs["covers"] = ["gpu"]
+    else:
+        rep["not_covered"] = {"gpu": "no <gpu> elements in the nvidia-smi output"}
     return obs
 
 
-def parse_nvidia_smi(text: str) -> dict:
-    return parse_nvidia_smi_xml(text) if text.lstrip().startswith("<") else parse_nvidia_smi_csv(text)
+def parse_nvidia_smi(text: str, report: dict | None = None) -> dict:
+    if text.lstrip().startswith("<"):
+        return parse_nvidia_smi_xml(text, report)
+    return parse_nvidia_smi_csv(text, report)
 
 
 # ---- combining ---------------------------------------------------------------------

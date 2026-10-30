@@ -193,3 +193,12 @@ stored.
 `decided_by`, `decided_at`, and `result` or `reason`. Audit actions: `proposal.create` (actor: the
 agent), `proposal.approve` and `proposal.reject` (actor: the person), plus the action's own events
 under the approver's name.
+
+## Capture folders (`tests/captures/<name>/`)
+
+`redfish.json`, `nvidia-smi.csv|xml`, optional `netbox.json`, and `expect.json`
+(`vcm-capture-expect/1`): `components` (counts by type), `covers`, `firmware` (keys found),
+`allow_problems` (doctor problems accepted for this machine), `notes`, `synthetic` (hand-written,
+exempt from the seal) and `sanitized: {sha256: {file: digest}, summary}` written by
+`vcm inventory sanitize`/`seal`. `vcm inventory doctor` returns `vcm-doctor/1`: `ok`, `problems`
+(capture incomplete or unusable), `warnings`, `components`, `covers`, `firmware`, `telemetry`.

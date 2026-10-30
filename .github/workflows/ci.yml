@@ -40,7 +40,7 @@ jobs:
         run: |
           printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
             '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
-            | vcm -C demo-workspace mcp | python -c "import sys,json; r=[json.loads(l) for l in sys.stdin]; assert len(r)==2 and len(r[1]['result']['tools'])>=21, r"
+            | vcm -C demo-workspace mcp | python -c "import sys,json; r=[json.loads(l) for l in sys.stdin]; assert len(r)==2 and len(r[1]['result']['tools'])>=22, r"
       - name: Catalog coverage is reported, not assumed
         working-directory: demo-workspace
         run: vcm catalog coverage --rev v1.1 --json

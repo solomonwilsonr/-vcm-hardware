@@ -112,6 +112,28 @@ vcm drift --rev v1.0 --redfish bmc.json --nvidia-smi gpus.csv --attach
 vcm inventory manifest --redfish bmc.json --out draft.node.json        # bootstrap a manifest
 ```
 
+Before trusting a new capture, ask it what it left out:
+
+```bash
+vcm inventory doctor --redfish bmc.json --nvidia-smi gpus.csv
+```
+
+The doctor lists Redfish resources that could not be fetched, kinds that were present but not read,
+component types the capture cannot vouch for (drift will not judge them), and parts too thinly
+described to match. A parser that is quiet about what it skipped makes a gap look like a clean
+result; this is how you find out. To share a capture, or add it to the test suite, scrub it first:
+
+```bash
+vcm inventory sanitize --redfish bmc.json --nvidia-smi gpus.csv --out tests/captures/<vendor>-<model>
+```
+
+That replaces serials, hostnames, addresses, UUIDs and secrets with stable same-shape stand-ins
+(identifiers correlate across files, model names, part numbers and firmware versions are left
+alone, and the scrubbed capture parses exactly as the original did), seals the folder with
+checksums, and drafts an `expect.json`. The folder then becomes a regression test automatically;
+see [`tests/captures/README.md`](tests/captures/README.md). The scrubber cannot know what a site
+considers sensitive in free text: read the output before you share it.
+
 `vcm drift` compares only the component types a source can see: a capture without NICs is never
 read as "NICs missing". With `--attach`, the observation becomes evidence on the revision, and the
 next impact report says whether the base was true, sets measured draw beside the declared estimate,
@@ -163,8 +185,8 @@ and opens no sockets. Point any MCP client at it, for example in `.mcp.json`:
                         "env": {"VCM_AGENT_NAME": "claude"}}}}
 ```
 
-The agent gets 20 read-only tools (diff, impact with confidence labels and evidence, drift against
-inline captures, catalog lookup, fleet query and recall, rack power, rollout plan, policy check,
+The agent gets 21 read-only tools (diff, impact with confidence labels and evidence, drift against
+inline captures, a capture doctor, catalog lookup, fleet query and recall, rack power, rollout plan, policy check,
 release and audit verification, passports, rollback) and two prompts (`review_change`,
 `fleet_upgrade_plan`). Its server instructions tell it to report each finding's confidence class and
 never upgrade it.
@@ -314,7 +336,8 @@ a named person against a cited source.
 - **The catalog is small and unreviewed.** 90 parts, none datasheet-verified by a human. Rules are
   heuristics and can be wrong or incomplete. VCM discloses what it does not know; it cannot
   disclose what it has wrong.
-- Observed-inventory parsing is tested against a **synthetic** Redfish capture and `nvidia-smi`
+- Observed-inventory parsing is tested against a **synthetic** Redfish capture (and `tests/captures/`
+  is where real, scrubbed ones go; none has been contributed yet) and `nvidia-smi`
   output written for the demo. BMC implementations vary; the live Redfish fetcher and the NetBox
   fetcher have not been run against real services here.
 - Power and thermal rules use declared and catalog figures. Attached telemetry is a point-in-time

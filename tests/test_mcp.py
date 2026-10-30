@@ -123,6 +123,7 @@ def test_read_only_tools_change_nothing(fleet):
         "vcm_drift": {"rev": "v1.0", "redfish": (OBS / "redfish-capture.json").read_text(),
                       "nvidia_smi": (OBS / "nvidia-smi.csv").read_text()},
         "vcm_draft_manifest": {"nvidia_smi": (OBS / "nvidia-smi.csv").read_text()},
+        "vcm_inventory_doctor": {"redfish": (OBS / "redfish-capture.json").read_text()},
     }
     assert set(reads) == {n for n, t in TOOLS.items() if not t.writes}  # none left untested
     for name, args in reads.items():

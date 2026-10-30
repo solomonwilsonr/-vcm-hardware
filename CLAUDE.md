@@ -21,7 +21,7 @@ confidence classes, which were already domain-agnostic. The board domain still w
 tested (`examples/demo-pcb.sh`, `tests/test_impact.py`) — it is simply no longer the product.
 Do not reintroduce PCB vocabulary into user-facing strings.
 
-Current state: a working MVP, 255 passing tests, Appwrite TablesDB live. Trust is in place
+Current state: a working MVP, 278 passing tests, Appwrite TablesDB live. Trust is in place
 (Ed25519 signatures, hash-chained audit log, token auth with roles, policies), VCM can read real
 machines (Redfish / `nvidia-smi` captures, drift, measured draw) and reason across a fleet (racks,
 recalls, rack power, rollout waves, NetBox placement), and teams can share history through remotes
@@ -168,8 +168,18 @@ rather than claiming none ran.
   invalidate its passport. Any new device field *is* signed unless added to `_UNSIGNED`.
 - **Every state change appends to the audit log** (`repo.audit.append`). New commands that change
   state should too; `vcm audit verify` and the property tests assume nothing edits it in place.
-- **Drift compares only what a source covers.** `observed["covers"]` lists the component types a
-  source can see; never report a type outside it as missing. Matching runs in passes from strict
+- **Drift compares only what a source covers, and coverage is computed, not assumed.**
+  `observed["covers"]` is built from what the capture actually returned: components of that type,
+  or a collection fully captured (even if empty). A BMC that does not expose memory must not make
+  every DIMM look missing. Never report a type outside `covers` as missing.
+- **A parser that is quiet about what it skipped makes a gap look clean.** `vcm inventory doctor`
+  (`vcm_parsers.diagnose`) is the answer: fetch errors, kinds present but unread, uncovered types,
+  unidentifiable parts. When you teach a parser a new Redfish kind, add it to `RECOGNISED_KINDS`.
+- **Real captures go through `vcm inventory sanitize` and are sealed.** `tests/captures/<name>/` is
+  picked up by `tests/test_captures.py` automatically; `vcm_parsers.captures.check` fails an
+  unsealed, edited-after-sealing, or sensitive folder. The scrubber leaves model names, part
+  numbers and firmware versions alone and never rewrites bare dotted numbers in prose (a firmware
+  version looks like an IP); it reports those as possible leaks. Do not weaken that to hide noise. Matching runs in passes from strict
   to loose (`vcm_diff/drift.py`): the property tests caught greedy matching inventing mismatches.
 - **The impact report is a published schema** (`vcm-impact/1`,
   `docs/schemas/impact-report.schema.json`). Adding fields is fine; removing or changing one needs

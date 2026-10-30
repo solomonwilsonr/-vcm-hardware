@@ -31,10 +31,13 @@ from vcm_mcp import approve as approve_proposal
 from vcm_mcp import get_proposal, list_proposals, reject, serve
 from vcm_mcp.proposals import render as render_proposal
 from vcm_parsers import (
+    captures,
     design_from_revision,
+    doctor,
     merge_observations,
     parse_nvidia_smi,
     parse_redfish,
+    render_doctor,
     to_node_manifest,
 )
 from vcm_trace import (
@@ -380,7 +383,85 @@ def _observation(args) -> dict:
     return obs
 
 
+def _read_all(paths: list[str] | None) -> str | None:
+    return Path(paths[0]).read_text() if paths else None
+
+
+def cmd_inventory_doctor(args) -> int:
+    res = doctor(_read_all(args.redfish), _read_all(args.nvidia_smi))
+    _dump(res) if args.json else print(render_doctor(res))
+    return 1 if (not res["ok"] or (args.strict and res["warnings"])) else 0
+
+
+def cmd_inventory_sanitize(args) -> int:
+    from vcm_parsers.sanitize import sanitize_bundle
+    files = {}
+    for src, name in ((args.redfish, "redfish.json"), (args.nvidia_smi, None),
+                      (args.netbox, "netbox.json")):
+        if src:
+            text = Path(src).read_text()
+            files[name or ("nvidia-smi.xml" if text.lstrip().startswith("<")
+                           else "nvidia-smi.csv")] = text
+    if not files:
+        raise VcmError("give at least one of --redfish, --nvidia-smi, --netbox")
+    res = sanitize_bundle(files, salt=args.salt, extra_keys=tuple(args.also or ()))
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    for name, text in res["files"].items():
+        (out / name).write_text(text)
+    # a starting point for the regression test that will guard this capture from now on
+    diag = doctor(res["files"].get("redfish.json"),
+                  next((t for n, t in res["files"].items() if n.startswith("nvidia-smi")), None))
+    expect = {"schema": "vcm-capture-expect/1", "components": diag["components"],
+              "covers": diag["covers"], "firmware": diag["firmware"],
+              "allow_problems": diag["problems"], "notes": "edit: what is this machine?"}
+    (out / "expect.json").write_text(json.dumps(expect, indent=1) + "\n")
+    captures.seal(out, res["summary"])
+    print(f"wrote {', '.join(sorted(res['files']))} and a sealed expect.json to {out}")
+    print("scrubbed: " + (", ".join(f"{k} {v}" for k, v in sorted(res["summary"].items()))
+                          or "nothing identifying found"))
+    leaks = res["leaks"]
+    for r in leaks["residual"]:
+        print(f"LEAK    {r}", file=sys.stderr)
+    for p in leaks["possible"]:
+        print(f"check   {p}", file=sys.stderr)
+    print("Read the output before you share or commit it: free-text and vendor-specific fields "
+          "can hold things only you would recognise.", file=sys.stderr)
+    if not diag["ok"]:
+        print("note: the doctor found problems in this capture (recorded in expect.json as "
+              "allowed; fix or re-capture if they are not expected):", file=sys.stderr)
+        for pr in diag["problems"]:
+            print(f"  {pr}", file=sys.stderr)
+    return 1 if leaks["residual"] or (args.strict and leaks["possible"]) else 0
+
+
+def cmd_inventory_check(args) -> int:
+    from vcm_parsers import captures
+    folder = Path(args.folder)
+    problems = captures.check(folder)
+    for p in problems:
+        print(f"PROBLEM  {p}")
+    print(f"{folder.name}: {'OK' if not problems else str(len(problems)) + ' problem(s)'}")
+    return 1 if problems else 0
+
+
+def cmd_inventory_seal(args) -> int:
+    folder = Path(args.folder)
+    exp = captures.seal(folder)
+    print(f"sealed {', '.join(sorted(exp['sanitized']['sha256']))} in {folder}/expect.json")
+    print("Only seal files you have read: the seal says a person looked at them.")
+    return 0
+
+
 def cmd_inventory(args) -> int:
+    if args.inv_cmd == "check":
+        return cmd_inventory_check(args)
+    if args.inv_cmd == "seal":
+        return cmd_inventory_seal(args)
+    if args.inv_cmd == "doctor":
+        return cmd_inventory_doctor(args)
+    if args.inv_cmd == "sanitize":
+        return cmd_inventory_sanitize(args)
     if args.inv_cmd == "fetch-redfish":
         import os
 
@@ -1073,6 +1154,32 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_inventory)
     obs_args(s)
     s.add_argument("--out")
+    s = inv.add_parser("doctor", help="say what a capture gave VCM and, above all, what it did not")
+    s.set_defaults(fn=cmd_inventory)
+    s.add_argument("--redfish", action="append", help="Redfish capture JSON")
+    s.add_argument("--nvidia-smi", action="append", help="nvidia-smi CSV or XML")
+    s.add_argument("--strict", action="store_true", help="exit 1 on warnings as well as problems")
+    s.add_argument("--json", action="store_true")
+    s = inv.add_parser("sanitize", help="scrub serials, addresses and secrets from captures so "
+                       "they can be shared and committed")
+    s.set_defaults(fn=cmd_inventory)
+    s.add_argument("--redfish", help="Redfish capture JSON")
+    s.add_argument("--nvidia-smi", help="nvidia-smi CSV or XML")
+    s.add_argument("--netbox", help="saved NetBox JSON (device names and comments are NOT "
+                   "scrubbed unless named with --also)")
+    s.add_argument("--also", action="append", metavar="KEY",
+                   help="also scrub values under this key (repeatable), e.g. name, comments")
+    s.add_argument("--salt", help="keep pseudonyms stable across runs (keep it secret); "
+                   "default: random per run")
+    s.add_argument("--out", required=True, help="directory to write the scrubbed files to")
+    s.add_argument("--strict", action="store_true", help="exit 1 if anything needs a look")
+    s = inv.add_parser("check", help="check a capture folder: sealed, nothing sensitive, and "
+                       "VCM still reads it as expected")
+    s.set_defaults(fn=cmd_inventory)
+    s.add_argument("folder")
+    s = inv.add_parser("seal", help="record checksums after you have read a capture folder")
+    s.set_defaults(fn=cmd_inventory)
+    s.add_argument("folder")
     s = inv.add_parser("fetch-redfish", help="capture a live BMC over the network (explicit)")
     s.set_defaults(fn=cmd_inventory)
     s.add_argument("url", help="e.g. https://10.0.0.21")

@@ -21,6 +21,7 @@ from vcm_diff import compare_drift, diff_revisions
 from vcm_graph import build_graph
 from vcm_parsers import (
     design_from_revision,
+    doctor,
     merge_observations,
     parse_nvidia_smi,
     parse_redfish,
@@ -240,6 +241,17 @@ def drift_tool(repo, args):
     if not meta:
         raise VcmError("that revision has no node manifest to compare against")
     return compare_drift(design, meta, _observation(args))
+
+
+@tool("vcm_inventory_doctor", "Check what a machine capture gave VCM and, above all, what it "
+      "did not: resources that could not be fetched, kinds present but not read, component "
+      "types the capture cannot vouch for. Run this before trusting vcm_drift on a new capture.",
+      {"redfish": _s("Redfish capture JSON, as text"),
+       "nvidia_smi": _s("nvidia-smi CSV or XML, as text")})
+def doctor_tool(repo, args):
+    if not (args.get("redfish") or args.get("nvidia_smi")):
+        raise VcmError("give redfish or nvidia_smi")
+    return doctor(args.get("redfish"), args.get("nvidia_smi"))
 
 
 @tool("vcm_draft_manifest", "Draft a node manifest from a machine's own reports. Connections, "

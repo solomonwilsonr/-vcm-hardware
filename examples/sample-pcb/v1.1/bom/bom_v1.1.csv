@@ -1,0 +1,13 @@
+Reference,Value,Footprint,Qty,Manufacturer,MPN,Voltage,Description
+J1,PWR_IN,Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical,1,,,,5V power input
+C1,10uF,Capacitor_SMD:C_0805_2012Metric,1,Murata,GRM21BR61A106KE19L,10V,10uF X5R ceramic
+U1,MCP1700-3302E/TT,Package_TO_SOT_SMD:SOT-23,1,Microchip,MCP1700-3302E/TT,,"250mA LDO 3.3V, SOT-23"
+C2,10uF,Capacitor_SMD:C_0805_2012Metric,1,Murata,GRM21BR60J106KE19L,6.3V,10uF X5R ceramic
+C3,100nF,Capacitor_SMD:C_0603_1608Metric,1,Murata,GRM188R71H104KA93D,50V,100nF X7R
+U2,ESP32-C3-MINI-1,RF_Module:ESP32-C3-MINI-1,1,Espressif,ESP32-C3-MINI-1-N4,,Wi-Fi/BLE module
+R1,10k,Resistor_SMD:R_0603_1608Metric,1,Yageo,RC0603FR-0710KL,,EN pull-up
+R2,330,Resistor_SMD:R_0603_1608Metric,1,Yageo,RC0603FR-07330RL,,LED series resistor
+D1,GREEN,LED_SMD:LED_0603_1608Metric,1,Lite-On,LTST-C190KGKT,,Status LED
+R3,4.7k,Resistor_SMD:R_0603_1608Metric,1,Yageo,RC0603FR-074K7L,,SDA pull-up
+R4,4.7k,Resistor_SMD:R_0603_1608Metric,1,Yageo,RC0603FR-074K7L,,SCL pull-up
+J2,SENSOR,Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical,1,,,,I2C sensor header

@@ -20,6 +20,8 @@ from .rules_datacenter import datacenter_rules, is_node_design, node_meta
 
 VERIFIED, RULE_BASED, SPECULATIVE = "verified", "rule_based", "speculative"
 CLASSES = (VERIFIED, RULE_BASED, SPECULATIVE)
+#: bumped only on incompatible changes; docs/schemas/impact-report.schema.json describes it
+REPORT_SCHEMA = "vcm-impact/1"
 AMBIENT_C = 40.0
 
 
@@ -515,7 +517,7 @@ def analyze(repo, rev_a: str, rev_b: str, provider: LLMProvider | None = None,
         b.add(SPECULATIVE, "info", f"LLM commentary ({provider.name})", text, [{"type": "ref", "ref": provider.name}])
     counts = {c: sum(f["confidence_class"] == c for f in b.findings) for c in CLASSES}
     sev = {s: sum(f["severity"] == s for f in b.findings) for s in ("critical", "warning", "info")}
-    return {"from": a.id, "to": bb.id, "provider": provider.name,
+    return {"schema": REPORT_SCHEMA, "from": a.id, "to": bb.id, "provider": provider.name,
             "summary": {"by_class": counts, "by_severity": sev,
                         "changed_components": d["changed_refs"],
                         "catalog_coverage": coverage["ratio"]},

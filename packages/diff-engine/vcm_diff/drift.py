@@ -71,21 +71,22 @@ def compare(design, node_meta: dict, observed: dict) -> dict:
     for t in checked:
         want = [d for d in declared if d["type"] == t]
         have = list(o for o in observed["components"] if o["type"] == t)
-        unmatched_want = []
-        # same slot and same part first, so a gap is attributed to the slot it is actually in
-        for d in list(want):
-            hit = next((i for i, o in enumerate(have)
-                        if d["slot"] and _same_slot(d["slot"], o.get("slot", ""))
-                        and models_match(d, o)), None)
-            if hit is not None:
-                have.pop(hit)
-                want.remove(d)
-        for d in want:
-            hit = next((i for i, o in enumerate(have) if models_match(d, o)), None)
-            if hit is None:
-                unmatched_want.append(d)
-            else:
-                have.pop(hit)
+        # Match in passes from strictest to loosest. Greedy loose matching alone can hand an
+        # observed part to the wrong declaration and then report a mismatch that is not there.
+        passes = (
+            lambda d, o: _same_slot(d["slot"], o.get("slot", "")) and models_match(d, o),
+            lambda d, o: _tokens(d["model"]) == _tokens(o.get("model", ""))
+            and (d.get("mpn") or "").upper() == (o.get("mpn") or "").upper(),
+            lambda d, o: _tokens(d["model"]) == _tokens(o.get("model", "")),
+            models_match,
+        )
+        for same in passes:
+            for d in list(want):
+                hit = next((i for i, o in enumerate(have) if same(d, o)), None)
+                if hit is not None:
+                    have.pop(hit)
+                    want.remove(d)
+        unmatched_want = want
         # pair leftovers: same count on both sides reads as "a different part is fitted"
         while unmatched_want and have:
             d, o = unmatched_want.pop(0), have.pop(0)

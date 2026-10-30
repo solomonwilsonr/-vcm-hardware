@@ -50,7 +50,7 @@ def place_device(repo: Repository, serial: str, rack: str, position: int | None 
     """Record where a unit is installed. Placement is not covered by passport signatures, since
     moving a unit does not change what it is."""
     dev = repo.load_record("devices", serial)
-    if not any(r["name"] == rack for r in list_racks(repo)):
+    if not (repo.dir / RACK_KIND / f"{rack}.json").is_file():
         define_rack(repo, rack)
     dev["location"] = {"rack": rack, "position": position}
     repo.save_record("devices", serial, dev)

@@ -38,17 +38,35 @@ class AuditLog:
             return []
         return [json.loads(ln) for ln in self.path.read_text().splitlines() if ln.strip()]
 
+    def last(self) -> dict | None:
+        """The newest event, read from the end of the file so appends stay O(1) in log size."""
+        if not self.path.is_file():
+            return None
+        with open(self.path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            end = f.tell()
+            chunk, pos = b"", end
+            while pos > 0:
+                step = min(4096, pos)
+                pos -= step
+                f.seek(pos)
+                chunk = f.read(step) + chunk
+                lines = [ln for ln in chunk.splitlines() if ln.strip()]
+                if len(lines) > 1 or (lines and pos == 0):
+                    return json.loads(lines[-1])
+        return None
+
     def head(self) -> str:
-        evs = self.events()
-        return evs[-1]["hash"] if evs else GENESIS
+        ev = self.last()
+        return ev["hash"] if ev else GENESIS
 
     def append(self, action: str, subject: str, data: dict | None = None,
                actor: str | None = None) -> dict:
-        evs = self.events()
-        event = {"seq": len(evs) + 1, "at": _now(),
+        prev = self.last()
+        event = {"seq": (prev["seq"] if prev else 0) + 1, "at": _now(),
                  "actor": actor or os.environ.get("VCM_AUTHOR", "unknown"),
                  "action": action, "subject": subject, "data": data or {},
-                 "prev": evs[-1]["hash"] if evs else GENESIS}
+                 "prev": prev["hash"] if prev else GENESIS}
         event["hash"] = event_hash(event)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.path, "a") as f:

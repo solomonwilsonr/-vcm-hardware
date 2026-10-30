@@ -506,6 +506,8 @@ def analyze(repo, rev_a: str, rev_b: str, provider: LLMProvider | None = None,
         _cap_rating_rules(b, d)
         _firmware_rules(b, d, rule_ids)
         _speculative(b, d, rule_ids)
+    from .plugins import run_plugins  # late: plugins import the node rules module
+    plugin_status = run_plugins(b, d)
     provider = provider or NoopProvider()
     summary_lines = [f"{f['id']} {f['title']}" for f in b.findings if f["confidence_class"] != SPECULATIVE]
     text = provider.complete("Summarise hardware change impact:\n" + "\n".join(summary_lines))
@@ -518,4 +520,6 @@ def analyze(repo, rev_a: str, rev_b: str, provider: LLMProvider | None = None,
                         "changed_components": d["changed_refs"],
                         "catalog_coverage": coverage["ratio"]},
             "catalog": {**coverage, **catalog.describe()},
+            "rules": {"domain": "node" if is_node_design(db) else "board",
+                      "plugins": plugin_status},
             "findings": b.findings, "required_retests": b.retests, "diff_summary": d["summary"]}

@@ -27,6 +27,8 @@ def _ev(e: dict) -> str:
         return f"catalog `{e['part']}` ({rv}" + (f"; {cited}" if cited else "") + ")"
     if t == "evidence":
         return f"{e.get('kind', 'evidence')} evidence @ {e.get('hash', '')[:10]}"
+    if t == "plugin":
+        return f"site rule `{e.get('plugin', '')}`"
     if t == "declared":
         return f"declared in {e.get('source', 'manifest')}"
     return f"{t} `{e.get('part', '')}`"

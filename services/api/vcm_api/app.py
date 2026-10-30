@@ -40,9 +40,11 @@ from vcm_workflow import (
     add_comment,
     approve,
     create_release,
+    evaluate_policy,
     explain,
     get_pr,
     list_prs,
+    load_policy,
     open_pr,
     plan_rollback,
     timeline,
@@ -193,6 +195,14 @@ def create_app(repo_path: str | None = None, insecure: bool | None = None) -> Fa
     def impact(a: str, b: str, format: str = Query("json", pattern="^(json|markdown)$")):
         rep = analyze(repo(), a, b)
         return PlainTextResponse(to_markdown(rep), media_type="text/markdown") if format == "markdown" else rep
+
+    @app.get("/api/policy")
+    def policy(a: str, b: str):
+        r = repo()
+        pol = load_policy(r, b)
+        report = analyze(r, a, b) if pol else None
+        return evaluate_policy(pol, report, "check",
+                               observed_base=r.latest_evidence(r.resolve(a), "observed") is not None)
 
     @app.get("/api/explain")
     def explain_(a: str, b: str):

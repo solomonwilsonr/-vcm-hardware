@@ -14,6 +14,8 @@ from vcm_core.signing import load_secret, load_trust, sign_digest, verify_signat
 from vcm_validation import validate_revision
 from vcm_validation.kicad_cli import kicad_version
 
+from .policy import evaluate, load_policy, observed
+
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
@@ -61,13 +63,32 @@ def _manifest_hash(manifest: dict) -> str:
     return sha256_bytes(canonical_json(body))
 
 
+def release_policy(repo: Repository, revision) -> dict:
+    """Policy at the release stage, judged on the change from the revision's first parent."""
+    pol = load_policy(repo, revision.id)
+    base = revision.parents[0] if revision.parents else None
+    report = None
+    if pol and base:
+        from vcm_ai import analyze  # only paid for when a policy exists
+        report = analyze(repo, base, revision.id)
+    return evaluate(pol, report, "release", observed_base=observed(repo, base))
+
+
 def create_release(repo: Repository, name: str, rev: str = "HEAD", out: str | Path | None = None,
-                   run_kicad: bool = False) -> dict:
+                   run_kicad: bool = False, override_policy: str | None = None,
+                   overridden_by: str | None = None) -> dict:
+    """Pin a revision. Refused when the committed policy is violated, unless the override reason
+    is given; an override is recorded in the manifest and the audit log, never silent."""
     if not NAME_RE.match(name):
         raise VcmError(f"invalid release name: {name!r}")
     if (repo.dir / "releases" / f"{name}.json").exists():
         raise VcmError(f"release already exists: {name}")
     revision = repo.get_revision(rev)
+    pol = release_policy(repo, revision)
+    if not pol["ok"] and not override_policy:
+        raise VcmError("release blocked by vcm-policy.json: " + "; ".join(
+            f"{v['id']}: {', '.join(v['problems'])}" for v in pol["violations"])
+            + " (pass an override reason to release anyway; it is recorded)")
     val = validate_revision(repo, revision.id, run_kicad=run_kicad, attach=True)
     manifest = {
         "schema": "vcm-release/1", "name": name, "created_at": now_iso(),
@@ -82,11 +103,20 @@ def create_release(repo: Repository, name: str, rev: str = "HEAD", out: str | Pa
                        "kicad_cli": (val["kicad_cli"] or {}).get("status", "not run")},
         # anchors the audit chain: rewriting history before this point breaks this release
         "audit_head": repo.audit.head(),
+        "policy": {"present": pol["policy"], "ok": pol["ok"],
+                   "violations": [v["id"] for v in pol["violations"]],
+                   "skipped": [x["id"] for x in pol["skipped"]]},
     }
+    if not pol["ok"]:
+        manifest["policy"]["override"] = {"reason": override_policy,
+                                          "by": overridden_by or os.environ.get("VCM_AUTHOR",
+                                                                                "unknown")}
     manifest["manifest_sha256"] = _manifest_hash(manifest)
     repo.save_record("releases", name, manifest)
     repo.audit.append("release.create", name, {"revision": revision.id,
                                                "manifest_sha256": manifest["manifest_sha256"]})
+    if not pol["ok"]:
+        repo.audit.append("policy.override", name, manifest["policy"])
     if out:
         out = Path(out)
         out.write_text(to_yaml(manifest) if out.suffix in (".yaml", ".yml")
@@ -150,6 +180,12 @@ def verify_release(repo: Repository, name_or_path: str, worktree: bool = False,
     if require_signature and not valid:
         check("signature_required", False,
               "no valid signature by a trusted key" if sigs else "release is unsigned")
+    if repo.store.has(m["revision"]):
+        pol = load_policy(repo, m["revision"])
+        if pol:
+            res = evaluate(pol, None, "verify", signed=valid > 0)
+            for v in res["violations"]:
+                check(f"policy:{v['id']}", False, "; ".join(v["problems"]))
     rid = m["revision"]
     rev = None
     if repo.store.verify(rid):

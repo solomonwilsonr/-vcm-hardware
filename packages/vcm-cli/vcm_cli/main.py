@@ -55,12 +55,15 @@ from vcm_workflow import (
     approve,
     close_pr,
     create_release,
+    evaluate_policy,
     explain,
     get_pr,
     list_prs,
+    load_policy,
     open_pr,
     plan_rollback,
     render_plan,
+    render_policy,
     render_pr,
     render_timeline,
     sign_release,
@@ -228,8 +231,23 @@ def cmd_validate(args) -> int:
     return 0 if res["status"] == "pass" else 1
 
 
+def cmd_policy(args) -> int:
+    repo = _repo(args)
+    a, b = _pair(args)
+    pol = load_policy(repo, b)
+    report = analyze(repo, a, b) if pol else None
+    res = evaluate_policy(pol, report, "check",
+                          observed_base=repo.latest_evidence(repo.resolve(a), "observed") is not None)
+    _dump(res) if args.json else print(render_policy(res))
+    return 0 if res["ok"] else 1
+
+
 def cmd_release_create(args) -> int:
-    m = create_release(_repo(args), args.name, args.rev, out=args.out, run_kicad=args.kicad)
+    m = create_release(_repo(args), args.name, args.rev, out=args.out, run_kicad=args.kicad,
+                       override_policy=args.override_policy)
+    if m["policy"].get("override"):
+        print(f"WARNING: released despite policy violations ({', '.join(m['policy']['violations'])}); "
+              f"override recorded: {m['policy']['override']['reason']}", file=sys.stderr)
     print(f"release {m['name']} -> revision {m['revision'][:10]}  validation {m['validation']['status']}")
     print(f"  {len(m['artifacts'])} artifacts pinned, manifest sha256 {m['manifest_sha256'][:16]}")
     return 0
@@ -877,6 +895,9 @@ def build_parser() -> argparse.ArgumentParser:
         s.add_argument("b", nargs="?")
         if name == "impact":
             s.add_argument("--llm", default="none", help="LLM provider name (default none: offline)")
+    s = add("policy", cmd_policy, "check a change against the committed vcm-policy.json", True)
+    s.add_argument("a", nargs="?")
+    s.add_argument("b", nargs="?")
     s = add("explain", cmd_explain, "explain the change between two revisions", True)
     s.add_argument("a")
     s.add_argument("b")
@@ -901,6 +922,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--rev", default="HEAD")
     s.add_argument("--out", help="also write the manifest to this .json/.yaml file")
     s.add_argument("--kicad", action="store_true")
+    s.add_argument("--override-policy", metavar="REASON",
+                   help="release despite vcm-policy.json violations; the reason is recorded")
     s = rel.add_parser("sign", help="sign a release manifest with a trusted Ed25519 key")
     s.set_defaults(fn=cmd_release_sign)
     s.add_argument("name")

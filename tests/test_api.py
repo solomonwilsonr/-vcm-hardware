@@ -86,3 +86,76 @@ def test_timeline_explain_and_dashboard(client):
 def test_api_rejects_path_traversal(client):
     r = client.get("/api/releases/..%2Fsecret")
     assert r.status_code in (400, 404)
+
+
+def test_dashboard_assets_are_served(client):
+    """The dashboard is three static files; it must not need a build step."""
+    page = client.get("/").text
+    assert '<link rel="stylesheet" href="/static/app.css">' in page
+    assert '<script src="/static/app.js"></script>' in page
+    css = client.get("/static/app.css")
+    js = client.get("/static/app.js")
+    assert css.status_code == 200 and "text/css" in css.headers["content-type"]
+    assert js.status_code == 200 and "javascript" in js.headers["content-type"]
+
+
+def test_dashboard_is_fully_offline(client):
+    """Hard rule: no network at runtime. Nothing may be fetched off this origin."""
+    blobs = [client.get(p).text for p in ("/", "/static/app.css", "/static/app.js")]
+    for text in blobs:
+        for scheme in ("http://", "https://", "//cdn", "@import url("):
+            # http(s) URLs may only appear as prose or sample payloads, never as a
+            # src/href/url() that the browser would actually fetch.
+            for attr in ('src="', "src='", 'href="', "href='", "url("):
+                assert attr + scheme not in text, (attr, scheme)
+    assert "fonts.googleapis" not in "".join(blobs)
+
+
+def test_dashboard_encodes_confidence_classes_without_colour_alone(client):
+    """Each confidence class needs a text label and a non-colour cue."""
+    css = client.get("/static/app.css").text
+    js = client.get("/static/app.js").text
+    for cls in ("verified", "rule_based", "speculative"):
+        assert "." + cls in css
+        assert cls in js
+    # Non-colour cue 1: distinct border style per class.
+    assert ".cchip.verified" in css and "border-style: solid" in css
+    assert ".cchip.rule_based" in css and "border-style: dashed" in css
+    assert ".cchip.speculative" in css and "border-style: dotted" in css
+    # Non-colour cue 2: a distinct SVG shape per class, drawn by cmark().
+    assert "function cmark(" in js
+    # Severity is a separate axis with its own chip and glyphs.
+    assert ".schip.critical" in css and ".schip.warning" in css and ".schip.info" in css
+    assert "function schip(" in js
+
+
+def test_dashboard_vocabulary_is_domain_neutral(client):
+    """The UI must read its vocabulary from the data, not assume PCB design.
+
+    Payload *keys* (``footprint_changes``, ``nets_added``) are part of the API
+    contract and are allowed; user-visible labels and hard-coded reference
+    designators are not.
+    """
+    js = client.get("/static/app.js").text
+    labels = [line for line in js.splitlines() if '"' in line]
+    banned = ("Footprint changes", "Net\"", "Nets\"", "BOM", "Schematic", "Board",
+              "Placement\"", "Electrically connected", "Δ mm")
+    for word in banned:
+        assert word not in js, word
+    # No hard-coded reference designator: the example comes from the timeline.
+    assert 'ref: null' in js and "function exampleRef(" in js
+    assert '"U1"' not in js and '"C2"' not in js
+    assert labels  # sanity: we actually scanned something
+
+
+def test_dashboard_surfaces_catalog_coverage(client):
+    """Catalog coverage is a domain-neutral trust signal and must be shown."""
+    rep = client.get("/api/impact", params={"a": "v1.0", "b": "v1.1"}).json()
+    assert "catalog" in rep, "impact report no longer carries a catalog block"
+    js = client.get("/static/app.js").text
+    assert "function catalogPanel(" in js
+    assert "catalogPanel(rep.catalog)" in js
+
+
+def test_static_mount_rejects_traversal(client):
+    assert client.get("/static/../app.py").status_code in (301, 307, 400, 404)

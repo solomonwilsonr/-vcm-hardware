@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from vcm_ai import analyze, to_markdown
@@ -211,6 +212,10 @@ def create_app(repo_path: str | None = None) -> FastAPI:
     @app.get("/")
     def dashboard():
         return FileResponse(STATIC / "index.html")
+
+    # The dashboard's stylesheet and script. Served from disk so the page stays a
+    # plain static bundle: no build step, no CDN, nothing fetched off this origin.
+    app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
     return app
 

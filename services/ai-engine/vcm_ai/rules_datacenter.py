@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 
 RULE_BASED = "rule_based"
+VERIFIED, SPECULATIVE = "verified", "speculative"
 _REDUNDANCY = re.compile(r"^\s*(\d+)\s*\+\s*(\d+)\s*$")
 
 
@@ -68,6 +69,29 @@ def _version(text: str) -> tuple[int, ...] | None:
     return tuple(int(x) for x in text.split("."))
 
 
+def domain_load(b, design, domain: str, cfg: dict) -> dict | None:
+    """Supplies, loads and declared draw on one power domain of ``design``; None without PSUs."""
+    on_domain = [r for r, c in design.components.items() if domain in c.pads.values()]
+    psus, loads, unknown = [], [], []
+    for ref in sorted(on_domain):
+        c = design.components[ref]
+        part = b.catalog.lookup(c)
+        kind = (c.lib_id or (part or {}).get("type") or "").lower()
+        if kind == "psu":
+            watts = prop(c, part, "watts")
+            psus.append((ref, float(watts))) if watts else unknown.append(ref)
+        else:
+            tdp = prop(c, part, "tdp_w")
+            loads.append((ref, float(tdp))) if tdp else unknown.append(ref)
+    if not psus:
+        return None
+    overhead = float(cfg.get("overhead_w") or 0)
+    usable, policy = usable_watts(cfg, [w for _, w in psus])
+    return {"on_domain": on_domain, "psus": psus, "loads": loads, "unknown": unknown,
+            "overhead": overhead, "draw": sum(w for _, w in loads) + overhead,
+            "usable": usable, "policy": policy, "installed": sum(w for _, w in psus)}
+
+
 def power_and_thermal_rules(b, d, meta: dict) -> list[str]:
     ids: list[str] = []
     changed = set(d["changed_refs"])
@@ -75,27 +99,12 @@ def power_and_thermal_rules(b, d, meta: dict) -> list[str]:
     chassis = meta.get("chassis") or {}
 
     for domain, cfg in sorted(domains.items()):
-        on_domain = [r for r, c in b.db.components.items() if domain in c.pads.values()]
-        if not changed & set(on_domain):
+        load = domain_load(b, b.db, domain, cfg)
+        if load is None or not changed & set(load["on_domain"]):
             continue
-        psus, loads, unknown = [], [], []
-        for ref in sorted(on_domain):
-            c = b.db.components[ref]
-            part = b.catalog.lookup(c)
-            kind = (c.lib_id or (part or {}).get("type") or "").lower()
-            if kind == "psu":
-                watts = prop(c, part, "watts")
-                psus.append((ref, float(watts))) if watts else unknown.append(ref)
-            else:
-                tdp = prop(c, part, "tdp_w")
-                loads.append((ref, float(tdp))) if tdp else unknown.append(ref)
-        if not psus:
-            continue
-
-        overhead = float(cfg.get("overhead_w") or 0)
-        draw = sum(w for _, w in loads) + overhead
-        usable, policy = usable_watts(cfg, [w for _, w in psus])
-        installed = sum(w for _, w in psus)
+        psus, loads, unknown = load["psus"], load["loads"], load["unknown"]
+        overhead, draw, usable = load["overhead"], load["draw"], load["usable"]
+        policy, installed = load["policy"], load["installed"]
         ev = [{"type": "ref", "ref": r} for r, _ in psus[:2]] + [
             {"type": "declared", "source": "node manifest", "domain": domain,
              "redundancy": cfg.get("redundancy", ""), "overhead_w": overhead}]
@@ -272,6 +281,68 @@ def connector_rules(b, d, meta: dict) -> list[str]:
     return ids
 
 
+def observed_rules(b, d, meta: dict) -> list[str]:
+    """What the machine itself reported for the base revision: drift and measured power.
+
+    Rule-based findings reason about the *declared* configuration. When an observation of the base
+    has been attached (``vcm drift --attach``), this says whether that declaration was true, and
+    sets measured draw beside the declared estimate. Measurement is ``verified``; extrapolating it
+    to the proposed configuration is a prediction, so that part is ``speculative``.
+    """
+    ids: list[str] = []
+    ev_rec = b.repo.latest_evidence(b.a.id, "observed")
+    if not ev_rec:
+        return ids
+    obs, drift = ev_rec.get("observation") or {}, ev_rec.get("drift") or {}
+    src = ", ".join(obs.get("sources", [])) or "observation"
+    ev = [{"type": "evidence", "kind": "observed", "revision": b.a.id,
+           "hash": ev_rec["_evidence"]["hash"], "captured_at": ev_rec.get("captured_at", "")}]
+    if drift.get("status") == "drifted":
+        titles = "; ".join(f["title"] for f in drift["findings"][:4])
+        more = len(drift["findings"]) - 4
+        ids.append(b.add(
+            VERIFIED, "critical" if drift["counts"].get("critical") else "warning",
+            "The base configuration does not match the machine it describes",
+            f"Observed by {src}: {titles}" + (f"; and {more} more" if more > 0 else "") + ". "
+            "Findings in this report reason about the declared configuration; where the machine "
+            "differs, re-run them against a corrected manifest.", ev))
+    elif drift:
+        ids.append(b.add(VERIFIED, "info", "Base configuration matches the observed machine",
+                         f"{src} reported no drift across "
+                         f"{', '.join(drift.get('checked_types', [])) or 'no types'}"
+                         + (f"; not checked: {', '.join(drift['unchecked_types'])}"
+                            if drift.get("unchecked_types") else "") + ".", ev))
+
+    samples = [float(x) for x in (obs.get("telemetry") or {}).get("node_power_w", [])]
+    domains = (meta.get("power") or {}).get("domains") or {}
+    base_meta = node_meta(b.da)
+    base_domains = (base_meta.get("power") or {}).get("domains") or {}
+    if not samples or len(domains) != 1 or len(base_domains) != 1:
+        return ids  # node-level readings only map cleanly onto a single power domain
+    (dom, cfg), (bdom, bcfg) = next(iter(domains.items())), next(iter(base_domains.items()))
+    head, base = domain_load(b, b.db, dom, cfg), domain_load(b, b.da, bdom, bcfg)
+    if head is None or base is None or base["draw"] <= 0:
+        return ids
+    peak = max(samples)
+    ratio = peak / base["draw"]
+    sev = "critical" if peak > base["usable"] else "info"
+    mid = b.add(VERIFIED, sev, f"Measured base draw: {peak:g} W peak",
+                f"{len(samples)} reading(s) from {src}; the declared estimate for the base "
+                f"configuration was {base['draw']:g} W, so the machine drew {ratio:.0%} of it at "
+                f"peak. Usable budget at the base: {base['usable']:g} W. Readings cover only the "
+                "workload that was running when they were taken.", ev)
+    ids.append(mid)
+    projected = head["draw"] * ratio
+    ids.append(b.add(
+        SPECULATIVE, "warning" if projected > head["usable"] else "info",
+        f"Projected draw of the proposed configuration: about {projected:.0f} W",
+        f"Scaling the declared {head['draw']:g} W by the measured/declared ratio of the base "
+        f"({ratio:.2f}) gives {projected:.0f} W against {head['usable']:g} W usable. This assumes "
+        "the new parts relate to their ratings the way the old ones did, under the same "
+        "workload; neither has been measured.", ev, derived_from=[mid]))
+    return ids
+
+
 def datacenter_rules(b, d) -> list[str]:
     """Every node-domain rule. Returns the ids of the findings produced."""
     meta = node_meta(b.db)
@@ -281,4 +352,5 @@ def datacenter_rules(b, d) -> list[str]:
     ids += pcie_rules(b, d, meta)
     ids += driver_rules(b, d, meta)
     ids += connector_rules(b, d, meta)
+    ids += observed_rules(b, d, meta)
     return ids

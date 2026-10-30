@@ -13,14 +13,21 @@ from vcm_ai.catalog import (
     Catalog,
     read_file,
 )
+from vcm_ai.rules_datacenter import node_meta
 from vcm_core import NothingToCommit, Repository, VcmError, now_iso
 from vcm_core import signing as sg
 from vcm_core.tokens import ROLES, TokenStore
-from vcm_diff import diff_revisions, render_text
+from vcm_diff import compare_drift, diff_revisions, render_text
 from vcm_graph import build_graph, project_config
 from vcm_graph.backends.appwrite_backend import health as appwrite_health
 from vcm_graph.backends.appwrite_backend import provision as appwrite_provision
-from vcm_parsers import design_from_revision
+from vcm_parsers import (
+    design_from_revision,
+    merge_observations,
+    parse_nvidia_smi,
+    parse_redfish,
+    to_node_manifest,
+)
 from vcm_trace import (
     affected_by_component,
     affected_by_revision,
@@ -306,6 +313,82 @@ def cmd_serve(args) -> int:
         print("WARNING: serving WITHOUT authentication (--insecure)", file=sys.stderr)
     uvicorn.run(app, host=args.host, port=args.port)
     return 0
+
+
+def _observation(args) -> dict:
+    """One merged observation from --observed / --redfish / --nvidia-smi files."""
+    parts = []
+    for f in args.observed or []:
+        parts.append(json.loads(Path(f).read_text()))
+    for f in args.redfish or []:
+        parts.append(parse_redfish(Path(f).read_text()))
+    for f in args.nvidia_smi or []:
+        parts.append(parse_nvidia_smi(Path(f).read_text()))
+    if not parts:
+        raise VcmError("give at least one of --observed, --redfish, --nvidia-smi")
+    obs = merge_observations(parts)
+    obs["captured_at"] = now_iso()
+    return obs
+
+
+def cmd_inventory(args) -> int:
+    if args.inv_cmd == "fetch-redfish":
+        import os
+
+        from .redfish_fetch import fetch
+        password = os.environ.get(args.password_env, "")
+        if not password:
+            print(f"set the BMC password in ${args.password_env}", file=sys.stderr)
+            return 2
+        cap = fetch(args.url, args.user, password, ca_file=args.ca_file,
+                    verify_tls=not args.insecure_tls)
+        Path(args.out).write_text(json.dumps(cap, indent=1) + "\n")
+        print(f"captured {len(cap['resources'])} Redfish resources into {args.out}")
+        return 0
+    obs = _observation(args)
+    if args.inv_cmd == "manifest":
+        draft = to_node_manifest(obs)
+        text = json.dumps(draft, indent=1) + "\n"
+        Path(args.out).write_text(text) if args.out else print(text, end="")
+        if args.out:
+            print(f"drafted {args.out}: {len(draft['components'])} components. Connections, "
+                  "power domains and chassis cooling are not observable: declare them by hand.")
+        return 0
+    text = json.dumps(obs, indent=1) + "\n"
+    Path(args.out).write_text(text) if args.out else print(text, end="")
+    if args.out:
+        print(f"observed {len(obs['components'])} components from {', '.join(obs['sources'])} "
+              f"into {args.out}")
+    return 0
+
+
+def cmd_drift(args) -> int:
+    repo = _repo(args)
+    obs = _observation(args)
+    rev = repo.get_revision(args.rev)
+    design = design_from_revision(repo, rev)
+    meta = node_meta(design)
+    if not meta:
+        raise VcmError(f"{args.rev} has no node manifest to compare against")
+    res = compare_drift(design, meta, obs)
+    if args.attach:
+        repo.attach_evidence(rev.id, "observed", {"observation": obs, "drift": res,
+                                                  "captured_at": obs.get("captured_at", "")})
+        repo.audit.append("observe", rev.id, {"status": res["status"],
+                                              "sources": obs["sources"]})
+    if args.json:
+        _dump(res)
+    else:
+        print(f"{res['node']} vs {args.rev} ({rev.id[:10]}): {res['status'].upper()} "
+              f"[{', '.join(res['sources'])}]")
+        for f in res["findings"]:
+            print(f"  {f['severity'].upper():8} {f['title']}")
+        print(f"  checked: {', '.join(res['checked_types'] + res['checked_firmware']) or 'nothing'}")
+        if res["unchecked_types"]:
+            print(f"  NOT checked (no source reports them): {', '.join(res['unchecked_types'])}")
+        if args.attach:
+            print(f"  attached as evidence to {rev.id[:10]}; `vcm impact` will cite it")
+    return 1 if res["status"] == "drifted" else 0
 
 
 def cmd_audit(args) -> int:
@@ -645,6 +728,39 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_key)
     s.add_argument("key_id")
     k.add_parser("list", help="trusted keys").set_defaults(fn=cmd_key)
+
+    def obs_args(sp):
+        sp.add_argument("--observed", action="append", help="vcm-observed/1 JSON (repeatable)")
+        sp.add_argument("--redfish", action="append", help="Redfish capture JSON (repeatable)")
+        sp.add_argument("--nvidia-smi", action="append",
+                        help="nvidia-smi --query-gpu CSV or -q -x XML (repeatable)")
+
+    inv = sub.add_parser("inventory", help="read what a machine reports about itself")
+    inv = inv.add_subparsers(dest="inv_cmd", required=True)
+    s = inv.add_parser("import", help="normalise captures into one vcm-observed/1 file")
+    s.set_defaults(fn=cmd_inventory)
+    obs_args(s)
+    s.add_argument("--out")
+    s = inv.add_parser("manifest", help="draft a node manifest from captures")
+    s.set_defaults(fn=cmd_inventory)
+    obs_args(s)
+    s.add_argument("--out")
+    s = inv.add_parser("fetch-redfish", help="capture a live BMC over the network (explicit)")
+    s.set_defaults(fn=cmd_inventory)
+    s.add_argument("url", help="e.g. https://10.0.0.21")
+    s.add_argument("--user", required=True)
+    s.add_argument("--password-env", default="VCM_BMC_PASSWORD",
+                   help="environment variable holding the password")
+    s.add_argument("--ca-file", help="CA bundle for the BMC's certificate")
+    s.add_argument("--insecure-tls", action="store_true",
+                   help="skip certificate verification (self-signed BMCs; prefer --ca-file)")
+    s.add_argument("--out", required=True)
+
+    s = add("drift", cmd_drift, "compare a revision's node manifest with the real machine", True)
+    obs_args(s)
+    s.add_argument("--rev", default="HEAD")
+    s.add_argument("--attach", action="store_true",
+                   help="store the observation as evidence on the revision")
 
     t = sub.add_parser("token", help="API tokens bound to a user and a role")
     t = t.add_subparsers(dest="token_cmd", required=True)

@@ -16,6 +16,19 @@ def _ev(e: dict) -> str:
         return f"commit `{e['revision'][:10]}` ({e.get('role', '')})"
     if t == "ref":
         return f"ref `{e['ref']}`"
+    if t == "db":
+        if "part" not in e:
+            return f"catalog ({e.get('parts_in_catalog', '?')} parts)"
+        rv = "reviewed" if e.get("reviewed") else "unreviewed"
+        fields = e.get("fields") or {}
+        cited = "; ".join(f"{k} from {v.get('source') or 'unattributed'}"
+                          + (f", verified by {v['verified_by']}" if v.get("verified_by") else "")
+                          for k, v in fields.items())
+        return f"catalog `{e['part']}` ({rv}" + (f"; {cited}" if cited else "") + ")"
+    if t == "evidence":
+        return f"{e.get('kind', 'evidence')} evidence @ {e.get('hash', '')[:10]}"
+    if t == "declared":
+        return f"declared in {e.get('source', 'manifest')}"
     return f"{t} `{e.get('part', '')}`"
 
 

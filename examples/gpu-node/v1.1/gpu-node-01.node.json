@@ -1,0 +1,556 @@
+{
+ "schema": "vcm-node/1",
+ "node": "gpu-node-01",
+ "site": "dc1-rack12-u20",
+ "chassis": {
+  "model": "Supermicro SYS-420GP-TNR",
+  "rack_units": 4,
+  "cooling_w": 3600,
+  "airflow_cfm": 380,
+  "max_gpu_slots": 8
+ },
+ "power": {
+  "domains": {
+   "PSU_BANK": {
+    "redundancy": "2+2",
+    "psu_count": 4,
+    "watts_each": 2000,
+    "input": "200-240VAC",
+    "overhead_w": 400,
+    "note": "overhead_w covers fans, backplane and board-level draw"
+   }
+  }
+ },
+ "firmware": {
+  "bios": "3.4",
+  "bmc": "1.12.03",
+  "gpu_driver": "470.223.02",
+  "cuda": "11.4"
+ },
+ "components": [
+  {
+   "ref": "GPU0",
+   "type": "gpu",
+   "model": "NVIDIA H100 NVL 94GB",
+   "mpn": "900-21010-0000-000",
+   "manufacturer": "NVIDIA",
+   "slot": "PCIE_SLOT1",
+   "form_factor": "FHFL dual-slot",
+   "tdp_w": 400,
+   "pcie_gen": 5,
+   "pcie_lanes": 16,
+   "power_connector": "12VHPWR (16-pin)",
+   "connections": {
+    "power": "PSU_BANK",
+    "pcie": "CPU0_PCIE_ROOT",
+    "interconnect": "NVLINK_FABRIC"
+   }
+  },
+  {
+   "ref": "GPU1",
+   "type": "gpu",
+   "model": "NVIDIA H100 NVL 94GB",
+   "mpn": "900-21010-0000-000",
+   "manufacturer": "NVIDIA",
+   "slot": "PCIE_SLOT2",
+   "form_factor": "FHFL dual-slot",
+   "tdp_w": 400,
+   "pcie_gen": 5,
+   "pcie_lanes": 16,
+   "power_connector": "12VHPWR (16-pin)",
+   "connections": {
+    "power": "PSU_BANK",
+    "pcie": "CPU0_PCIE_ROOT",
+    "interconnect": "NVLINK_FABRIC"
+   }
+  },
+  {
+   "ref": "GPU2",
+   "type": "gpu",
+   "model": "NVIDIA H100 NVL 94GB",
+   "mpn": "900-21010-0000-000",
+   "manufacturer": "NVIDIA",
+   "slot": "PCIE_SLOT3",
+   "form_factor": "FHFL dual-slot",
+   "tdp_w": 400,
+   "pcie_gen": 5,
+   "pcie_lanes": 16,
+   "power_connector": "12VHPWR (16-pin)",
+   "connections": {
+    "power": "PSU_BANK",
+    "pcie": "CPU0_PCIE_ROOT",
+    "interconnect": "NVLINK_FABRIC"
+   }
+  },
+  {
+   "ref": "GPU3",
+   "type": "gpu",
+   "model": "NVIDIA H100 NVL 94GB",
+   "mpn": "900-21010-0000-000",
+   "manufacturer": "NVIDIA",
+   "slot": "PCIE_SLOT4",
+   "form_factor": "FHFL dual-slot",
+   "tdp_w": 400,
+   "pcie_gen": 5,
+   "pcie_lanes": 16,
+   "power_connector": "12VHPWR (16-pin)",
+   "connections": {
+    "power": "PSU_BANK",
+    "pcie": "CPU0_PCIE_ROOT",
+    "interconnect": "NVLINK_FABRIC"
+   }
+  },
+  {
+   "ref": "GPU4",
+   "type": "gpu",
+   "model": "NVIDIA H100 NVL 94GB",
+   "mpn": "900-21010-0000-000",
+   "manufacturer": "NVIDIA",
+   "slot": "PCIE_SLOT5",
+   "form_factor": "FHFL dual-slot",
+   "tdp_w": 400,
+   "pcie_gen": 5,
+   "pcie_lanes": 16,
+   "power_connector": "12VHPWR (16-pin)",
+   "connections": {
+    "power": "PSU_BANK",
+    "pcie": "CPU1_PCIE_ROOT",
+    "interconnect": "NVLINK_FABRIC"
+   }
+  },
+  {
+   "ref": "GPU5",
+   "type": "gpu",
+   "model": "NVIDIA H100 NVL 94GB",
+   "mpn": "900-21010-0000-000",
+   "manufacturer": "NVIDIA",
+   "slot": "PCIE_SLOT6",
+   "form_factor": "FHFL dual-slot",
+   "tdp_w": 400,
+   "pcie_gen": 5,
+   "pcie_lanes": 16,
+   "power_connector": "12VHPWR (16-pin)",
+   "connections": {
+    "power": "PSU_BANK",
+    "pcie": "CPU1_PCIE_ROOT",
+    "interconnect": "NVLINK_FABRIC"
+   }
+  },
+  {
+   "ref": "GPU6",
+   "type": "gpu",
+   "model": "NVIDIA H100 NVL 94GB",
+   "mpn": "900-21010-0000-000",
+   "manufacturer": "NVIDIA",
+   "slot": "PCIE_SLOT7",
+   "form_factor": "FHFL dual-slot",
+   "tdp_w": 400,
+   "pcie_gen": 5,
+   "pcie_lanes": 16,
+   "power_connector": "12VHPWR (16-pin)",
+   "connections": {
+    "power": "PSU_BANK",
+    "pcie": "CPU1_PCIE_ROOT",
+    "interconnect": "NVLINK_FABRIC"
+   }
+  },
+  {
+   "ref": "GPU7",
+   "type": "gpu",
+   "model": "NVIDIA H100 NVL 94GB",
+   "mpn": "900-21010-0000-000",
+   "manufacturer": "NVIDIA",
+   "slot": "PCIE_SLOT8",
+   "form_factor": "FHFL dual-slot",
+   "tdp_w": 400,
+   "pcie_gen": 5,
+   "pcie_lanes": 16,
+   "power_connector": "12VHPWR (16-pin)",
+   "connections": {
+    "power": "PSU_BANK",
+    "pcie": "CPU1_PCIE_ROOT",
+    "interconnect": "NVLINK_FABRIC"
+   }
+  },
+  {
+   "ref": "CPU0",
+   "type": "cpu",
+   "model": "Intel Xeon Gold 6338",
+   "mpn": "CD8068904572501",
+   "manufacturer": "Intel",
+   "slot": "SOCKET0",
+   "form_factor": "LGA4189",
+   "tdp_w": 205,
+   "pcie_gen": 4,
+   "pcie_lanes": 64,
+   "connections": {
+    "power": "PSU_BANK",
+    "pcie": "CPU0_PCIE_ROOT",
+    "memory": "CPU0_MEM"
+   }
+  },
+  {
+   "ref": "CPU1",
+   "type": "cpu",
+   "model": "Intel Xeon Gold 6338",
+   "mpn": "CD8068904572501",
+   "manufacturer": "Intel",
+   "slot": "SOCKET1",
+   "form_factor": "LGA4189",
+   "tdp_w": 205,
+   "pcie_gen": 4,
+   "pcie_lanes": 64,
+   "connections": {
+    "power": "PSU_BANK",
+    "pcie": "CPU1_PCIE_ROOT",
+    "memory": "CPU1_MEM"
+   }
+  },
+  {
+   "ref": "DIMM00",
+   "type": "dimm",
+   "model": "32GB DDR4-3200 RDIMM",
+   "mpn": "M393A4K40DB3-CWE",
+   "manufacturer": "Samsung",
+   "slot": "DIMM_A0",
+   "form_factor": "DDR4 RDIMM",
+   "tdp_w": 7.5,
+   "connections": {
+    "power": "PSU_BANK",
+    "memory": "CPU0_MEM"
+   }
+  },
+  {
+   "ref": "DIMM01",
+   "type": "dimm",
+   "model": "32GB DDR4-3200 RDIMM",
+   "mpn": "M393A4K40DB3-CWE",
+   "manufacturer": "Samsung",
+   "slot": "DIMM_A1",
+   "form_factor": "DDR4 RDIMM",
+   "tdp_w": 7.5,
+   "connections": {
+    "power": "PSU_BANK",
+    "memory": "CPU0_MEM"
+   }
+  },
+  {
+   "ref": "DIMM02",
+   "type": "dimm",
+   "model": "32GB DDR4-3200 RDIMM",
+   "mpn": "M393A4K40DB3-CWE",
+   "manufacturer": "Samsung",
+   "slot": "DIMM_A2",
+   "form_factor": "DDR4 RDIMM",
+   "tdp_w": 7.5,
+   "connections": {
+    "power": "PSU_BANK",
+    "memory": "CPU0_MEM"
+   }
+  },
+  {
+   "ref": "DIMM03",
+   "type": "dimm",
+   "model": "32GB DDR4-3200 RDIMM",
+   "mpn": "M393A4K40DB3-CWE",
+   "manufacturer": "Samsung",
+   "slot": "DIMM_A3",
+   "form_factor": "DDR4 RDIMM",
+   "tdp_w": 7.5,
+   "connections": {
+    "power": "PSU_BANK",
+    "memory": "CPU0_MEM"
+   }
+  },
+  {
+   "ref": "DIMM04",
+   "type": "dimm",
+   "model": "32GB DDR4-3200 RDIMM",
+   "mpn": "M393A4K40DB3-CWE",
+   "manufacturer": "Samsung",
+   "slot": "DIMM_A4",
+   "form_factor": "DDR4 RDIMM",
+   "tdp_w": 7.5,
+   "connections": {
+    "power": "PSU_BANK",
+    "memory": "CPU0_MEM"
+   }
+  },
+  {
+   "ref": "DIMM05",
+   "type": "dimm",
+   "model": "32GB DDR4-3200 RDIMM",
+   "mpn": "M393A4K40DB3-CWE",
+   "manufacturer": "Samsung",
+   "slot": "DIMM_A5",
+   "form_factor": "DDR4 RDIMM",
+   "tdp_w": 7.5,
+   "connections": {
+    "power": "PSU_BANK",
+    "memory": "CPU0_MEM"
+   }
+  },
+  {
+   "ref": "DIMM06",
+   "type": "dimm",
+   "model": "32GB DDR4-3200 RDIMM",
+   "mpn": "M393A4K40DB3-CWE",
+   "manufacturer": "Samsung",
+   "slot": "DIMM_A6",
+   "form_factor": "DDR4 RDIMM",
+   "tdp_w": 7.5,
+   "connections": {
+    "power": "PSU_BANK",
+    "memory": "CPU0_MEM"
+   }
+  },
+  {
+   "ref": "DIMM07",
+   "type": "dimm",
+   "model": "32GB DDR4-3200 RDIMM",
+   "mpn": "M393A4K40DB3-CWE",
+   "manufacturer": "Samsung",
+   "slot": "DIMM_A7",
+   "form_factor": "DDR4 RDIMM",
+   "tdp_w": 7.5,
+   "connections": {
+    "power": "PSU_BANK",
+    "memory": "CPU0_MEM"
+   }
+  },
+  {
+   "ref": "DIMM08",
+   "type": "dimm",
+   "model": "32GB DDR4-3200 RDIMM",
+   "mpn": "M393A4K40DB3-CWE",
+   "manufacturer": "Samsung",
+   "slot": "DIMM_B0",
+   "form_factor": "DDR4 RDIMM",
+   "tdp_w": 7.5,
+   "connections": {
+    "power": "PSU_BANK",
+    "memory": "CPU1_MEM"
+   }
+  },
+  {
+   "ref": "DIMM09",
+   "type": "dimm",
+   "model": "32GB DDR4-3200 RDIMM",
+   "mpn": "M393A4K40DB3-CWE",
+   "manufacturer": "Samsung",
+   "slot": "DIMM_B1",
+   "form_factor": "DDR4 RDIMM",
+   "tdp_w": 7.5,
+   "connections": {
+    "power": "PSU_BANK",
+    "memory": "CPU1_MEM"
+   }
+  },
+  {
+   "ref": "DIMM10",
+   "type": "dimm",
+   "model": "32GB DDR4-3200 RDIMM",
+   "mpn": "M393A4K40DB3-CWE",
+   "manufacturer": "Samsung",
+   "slot": "DIMM_B2",
+   "form_factor": "DDR4 RDIMM",
+   "tdp_w": 7.5,
+   "connections": {
+    "power": "PSU_BANK",
+    "memory": "CPU1_MEM"
+   }
+  },
+  {
+   "ref": "DIMM11",
+   "type": "dimm",
+   "model": "32GB DDR4-3200 RDIMM",
+   "mpn": "M393A4K40DB3-CWE",
+   "manufacturer": "Samsung",
+   "slot": "DIMM_B3",
+   "form_factor": "DDR4 RDIMM",
+   "tdp_w": 7.5,
+   "connections": {
+    "power": "PSU_BANK",
+    "memory": "CPU1_MEM"
+   }
+  },
+  {
+   "ref": "DIMM12",
+   "type": "dimm",
+   "model": "32GB DDR4-3200 RDIMM",
+   "mpn": "M393A4K40DB3-CWE",
+   "manufacturer": "Samsung",
+   "slot": "DIMM_B4",
+   "form_factor": "DDR4 RDIMM",
+   "tdp_w": 7.5,
+   "connections": {
+    "power": "PSU_BANK",
+    "memory": "CPU1_MEM"
+   }
+  },
+  {
+   "ref": "DIMM13",
+   "type": "dimm",
+   "model": "32GB DDR4-3200 RDIMM",
+   "mpn": "M393A4K40DB3-CWE",
+   "manufacturer": "Samsung",
+   "slot": "DIMM_B5",
+   "form_factor": "DDR4 RDIMM",
+   "tdp_w": 7.5,
+   "connections": {
+    "power": "PSU_BANK",
+    "memory": "CPU1_MEM"
+   }
+  },
+  {
+   "ref": "DIMM14",
+   "type": "dimm",
+   "model": "32GB DDR4-3200 RDIMM",
+   "mpn": "M393A4K40DB3-CWE",
+   "manufacturer": "Samsung",
+   "slot": "DIMM_B6",
+   "form_factor": "DDR4 RDIMM",
+   "tdp_w": 7.5,
+   "connections": {
+    "power": "PSU_BANK",
+    "memory": "CPU1_MEM"
+   }
+  },
+  {
+   "ref": "DIMM15",
+   "type": "dimm",
+   "model": "32GB DDR4-3200 RDIMM",
+   "mpn": "M393A4K40DB3-CWE",
+   "manufacturer": "Samsung",
+   "slot": "DIMM_B7",
+   "form_factor": "DDR4 RDIMM",
+   "tdp_w": 7.5,
+   "connections": {
+    "power": "PSU_BANK",
+    "memory": "CPU1_MEM"
+   }
+  },
+  {
+   "ref": "PSU0",
+   "type": "psu",
+   "model": "2000W Titanium CRPS",
+   "mpn": "PWS-2K04A-1R",
+   "manufacturer": "Supermicro",
+   "slot": "PSU_BAY0",
+   "form_factor": "CRPS",
+   "watts": 2000,
+   "efficiency": "80+ Titanium",
+   "connections": {
+    "power": "PSU_BANK"
+   }
+  },
+  {
+   "ref": "PSU1",
+   "type": "psu",
+   "model": "2000W Titanium CRPS",
+   "mpn": "PWS-2K04A-1R",
+   "manufacturer": "Supermicro",
+   "slot": "PSU_BAY1",
+   "form_factor": "CRPS",
+   "watts": 2000,
+   "efficiency": "80+ Titanium",
+   "connections": {
+    "power": "PSU_BANK"
+   }
+  },
+  {
+   "ref": "PSU2",
+   "type": "psu",
+   "model": "2000W Titanium CRPS",
+   "mpn": "PWS-2K04A-1R",
+   "manufacturer": "Supermicro",
+   "slot": "PSU_BAY2",
+   "form_factor": "CRPS",
+   "watts": 2000,
+   "efficiency": "80+ Titanium",
+   "connections": {
+    "power": "PSU_BANK"
+   }
+  },
+  {
+   "ref": "PSU3",
+   "type": "psu",
+   "model": "2000W Titanium CRPS",
+   "mpn": "PWS-2K04A-1R",
+   "manufacturer": "Supermicro",
+   "slot": "PSU_BAY3",
+   "form_factor": "CRPS",
+   "watts": 2000,
+   "efficiency": "80+ Titanium",
+   "connections": {
+    "power": "PSU_BANK"
+   }
+  },
+  {
+   "ref": "NIC0",
+   "type": "nic",
+   "model": "ConnectX-6 Dx 100GbE",
+   "mpn": "MCX623106AN-CDAT",
+   "manufacturer": "NVIDIA",
+   "slot": "OCP_SLOT0",
+   "form_factor": "OCP 3.0",
+   "tdp_w": 19,
+   "pcie_gen": 4,
+   "pcie_lanes": 16,
+   "connections": {
+    "power": "PSU_BANK",
+    "pcie": "CPU0_PCIE_ROOT",
+    "fabric": "ETH_FABRIC"
+   }
+  },
+  {
+   "ref": "NIC1",
+   "type": "nic",
+   "model": "ConnectX-6 Dx 100GbE",
+   "mpn": "MCX623106AN-CDAT",
+   "manufacturer": "NVIDIA",
+   "slot": "OCP_SLOT1",
+   "form_factor": "OCP 3.0",
+   "tdp_w": 19,
+   "pcie_gen": 4,
+   "pcie_lanes": 16,
+   "connections": {
+    "power": "PSU_BANK",
+    "pcie": "CPU1_PCIE_ROOT",
+    "fabric": "ETH_FABRIC"
+   }
+  },
+  {
+   "ref": "NVME0",
+   "type": "nvme",
+   "model": "3.84TB NVMe U.2",
+   "mpn": "MZQL23T8HCLS",
+   "manufacturer": "Samsung",
+   "slot": "U2_BAY0",
+   "form_factor": "U.2 2.5in",
+   "tdp_w": 11,
+   "pcie_gen": 4,
+   "pcie_lanes": 4,
+   "connections": {
+    "power": "PSU_BANK",
+    "pcie": "CPU0_PCIE_ROOT"
+   }
+  },
+  {
+   "ref": "NVME1",
+   "type": "nvme",
+   "model": "3.84TB NVMe U.2",
+   "mpn": "MZQL23T8HCLS",
+   "manufacturer": "Samsung",
+   "slot": "U2_BAY1",
+   "form_factor": "U.2 2.5in",
+   "tdp_w": 11,
+   "pcie_gen": 4,
+   "pcie_lanes": 4,
+   "connections": {
+    "power": "PSU_BANK",
+    "pcie": "CPU0_PCIE_ROOT"
+   }
+  }
+ ]
+}

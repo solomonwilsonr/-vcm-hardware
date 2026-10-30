@@ -18,8 +18,10 @@ class Component:
     y: float | None = None
     rotation: float = 0.0
     layer: str = ""
-    pads: dict[str, str] = field(default_factory=dict)  # pad number -> net name ("" = unconnected)
+    pads: dict[str, str] = field(default_factory=dict)  # pad/port -> net name ("" = unconnected)
     by_source: dict[str, dict[str, str]] = field(default_factory=dict)
+    #: free-form declared properties (node manifests carry TDP, PCIe generation, slot, ...)
+    props: dict[str, str] = field(default_factory=dict)
 
     @property
     def footprint_name(self) -> str:
@@ -29,7 +31,7 @@ class Component:
         return {"ref": self.ref, "value": self.value, "footprint": self.footprint,
                 "lib_id": self.lib_id, "mpn": self.mpn, "manufacturer": self.manufacturer,
                 "voltage": self.voltage, "x": self.x, "y": self.y,
-                "rotation": self.rotation, "layer": self.layer}
+                "rotation": self.rotation, "layer": self.layer, "props": self.props}
 
 
 @dataclass
@@ -38,6 +40,8 @@ class Design:
     sources: dict[str, list[str]] = field(default_factory=dict)  # kind -> paths
     duplicates: list[dict] = field(default_factory=list)  # {"ref","source"}
     declared_nets: set[str] = field(default_factory=set)
+    #: design-level declarations a parser found (node name, chassis, power domains, firmware)
+    meta: dict = field(default_factory=dict)
 
     @property
     def nets(self) -> dict[str, list[str]]:

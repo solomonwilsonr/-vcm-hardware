@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 
 CATEGORIES = (
-    "pcb", "mechanical", "electronics", "fpga",
+    "inventory", "pcb", "mechanical", "electronics", "fpga",
     "firmware", "manufacturing", "simulation", "docs", "other",
 )
 
@@ -31,6 +31,9 @@ def categorize(path: str) -> str:
     ext = p.suffix.lower()
     if ext == ".csv":
         return "electronics" if "bom" in p.name.lower() else "other"
-    if ext == ".json" and p.name == "vcm.json":
-        return "docs"
+    if ext == ".json":
+        if p.name == "vcm.json":
+            return "docs"
+        if p.name.lower().endswith(".node.json"):
+            return "inventory"
     return _EXT.get(ext, "other")

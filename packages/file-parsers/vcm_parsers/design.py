@@ -4,23 +4,26 @@ from __future__ import annotations
 from .bom import looks_like_bom, parse_bom
 from .kicad import parse_pcb, parse_schematic
 from .model import Component, Design
+from .node import looks_like_node, parse_node
 
 _FIELDS = ("value", "footprint", "lib_id", "mpn", "manufacturer", "description", "voltage")
 # Which source wins for each field (first non-empty in this order).
 _PRIORITY = {
-    "value": ("schematic", "pcb", "bom"),
-    "footprint": ("pcb", "schematic", "bom"),
-    "lib_id": ("schematic", "bom", "pcb"),
-    "mpn": ("bom", "schematic", "pcb"),
-    "manufacturer": ("bom", "schematic", "pcb"),
-    "description": ("bom", "schematic", "pcb"),
+    "value": ("node", "schematic", "pcb", "bom"),
+    "footprint": ("node", "pcb", "schematic", "bom"),
+    "lib_id": ("node", "schematic", "bom", "pcb"),
+    "mpn": ("node", "bom", "schematic", "pcb"),
+    "manufacturer": ("node", "bom", "schematic", "pcb"),
+    "description": ("node", "bom", "schematic", "pcb"),
     "voltage": ("bom", "schematic", "pcb"),
 }
+#: file suffixes that carry design content
+DESIGN_SUFFIXES = (".kicad_sch", ".kicad_pcb", ".csv", ".json")
 
 
 def build_design(files: dict[str, bytes]) -> Design:
     design = Design()
-    per_source: dict[str, dict[str, Component]] = {"schematic": {}, "pcb": {}, "bom": {}}
+    per_source: dict[str, dict[str, Component]] = {"node": {}, "schematic": {}, "pcb": {}, "bom": {}}
 
     def add(kind: str, path: str, comps: list[Component], dups: list[str]) -> None:
         design.sources.setdefault(kind, []).append(path)
@@ -45,6 +48,11 @@ def build_design(files: dict[str, bytes]) -> Design:
         elif low.endswith(".csv") and looks_like_bom(text):
             comps, dups, _ = parse_bom(text)
             add("bom", path, comps, dups)
+        elif low.endswith(".json") and looks_like_node(text):
+            comps, domains, dups, meta = parse_node(text)
+            design.declared_nets |= domains
+            design.meta.setdefault("nodes", []).append(meta)
+            add("node", path, comps, dups)
 
     refs = sorted({r for src in per_source.values() for r in src})
     for ref in refs:
@@ -63,6 +71,11 @@ def build_design(files: dict[str, bytes]) -> Design:
         if pcb is not None:
             merged.x, merged.y, merged.rotation = pcb.x, pcb.y, pcb.rotation
             merged.layer, merged.pads = pcb.layer, dict(pcb.pads)
+        node = per_source["node"].get(ref)
+        if node is not None:
+            # a node manifest is authoritative for its own connections and properties
+            merged.pads = dict(node.pads)
+            merged.props = dict(node.props)
         design.components[ref] = merged
     return design
 
@@ -72,5 +85,5 @@ def design_from_revision(repo, rev) -> Design:
     from vcm_core import Revision
     r = rev if isinstance(rev, Revision) else repo.get_revision(rev)
     wanted = {p: repo.store.read(a.hash) for p, a in r.artifacts.items()
-              if p.lower().endswith((".kicad_sch", ".kicad_pcb", ".csv"))}
+              if p.lower().endswith(DESIGN_SUFFIXES)}
     return build_design(wanted)

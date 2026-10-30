@@ -1,0 +1,495 @@
+{
+ "_note": "Datacenter node catalog: accelerators, CPUs, PSUs, NICs and memory. Values are headline vendor figures entered for capacity planning, NOT a datasheet review -- every entry is \"reviewed\": false. TDP is a board power rating, not measured draw under your workload. Override any entry in ~/.vcm/catalog/ or vcm-catalog/.",
+ "parts": [
+  {
+   "match": [
+    "NVIDIA A100 PCIe 40GB",
+    "900-21001",
+    "A100 PCIe 40GB"
+   ],
+   "type": "gpu",
+   "tdp_w": 250,
+   "pcie_gen": 4,
+   "pcie_lanes": 16,
+   "power_connector": "8-pin EPS",
+   "min_driver": "450.80.02",
+   "min_cuda": "11.0",
+   "memory_gb": 40,
+   "slot_width": 2,
+   "form_factor": "FHFL dual-slot",
+   "source": "NVIDIA A100 PCIe datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "NVIDIA A100 PCIe 80GB",
+    "A100 PCIe 80GB"
+   ],
+   "type": "gpu",
+   "tdp_w": 300,
+   "pcie_gen": 4,
+   "pcie_lanes": 16,
+   "power_connector": "8-pin EPS",
+   "min_driver": "450.80.02",
+   "min_cuda": "11.0",
+   "memory_gb": 80,
+   "slot_width": 2,
+   "form_factor": "FHFL dual-slot",
+   "source": "NVIDIA A100 80GB PCIe datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "NVIDIA A100 SXM",
+    "A100 SXM4"
+   ],
+   "type": "gpu",
+   "tdp_w": 400,
+   "pcie_gen": 4,
+   "pcie_lanes": 16,
+   "power_connector": "SXM4 board",
+   "min_driver": "450.80.02",
+   "min_cuda": "11.0",
+   "memory_gb": 80,
+   "slot_width": 0,
+   "form_factor": "SXM4",
+   "source": "NVIDIA A100 SXM datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "NVIDIA H100 PCIe",
+    "H100 PCIe"
+   ],
+   "type": "gpu",
+   "tdp_w": 350,
+   "pcie_gen": 5,
+   "pcie_lanes": 16,
+   "power_connector": "16-pin 12VHPWR",
+   "min_driver": "525.60.13",
+   "min_cuda": "12.0",
+   "memory_gb": 80,
+   "slot_width": 2,
+   "form_factor": "FHFL dual-slot",
+   "source": "NVIDIA H100 PCIe datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "NVIDIA H100 NVL 94GB",
+    "900-21010",
+    "H100 NVL"
+   ],
+   "type": "gpu",
+   "tdp_w": 400,
+   "pcie_gen": 5,
+   "pcie_lanes": 16,
+   "power_connector": "12VHPWR (16-pin)",
+   "min_driver": "525.60.13",
+   "min_cuda": "12.0",
+   "memory_gb": 94,
+   "slot_width": 2,
+   "form_factor": "FHFL dual-slot",
+   "source": "NVIDIA H100 NVL datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "NVIDIA H100 SXM",
+    "H100 SXM5"
+   ],
+   "type": "gpu",
+   "tdp_w": 700,
+   "pcie_gen": 5,
+   "pcie_lanes": 16,
+   "power_connector": "SXM5 board",
+   "min_driver": "525.60.13",
+   "min_cuda": "12.0",
+   "memory_gb": 80,
+   "slot_width": 0,
+   "form_factor": "SXM5",
+   "source": "NVIDIA H100 SXM datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "NVIDIA H200 NVL",
+    "H200 NVL"
+   ],
+   "type": "gpu",
+   "tdp_w": 600,
+   "pcie_gen": 5,
+   "pcie_lanes": 16,
+   "power_connector": "12VHPWR (16-pin)",
+   "min_driver": "535.104.05",
+   "min_cuda": "12.2",
+   "memory_gb": 141,
+   "slot_width": 2,
+   "form_factor": "FHFL dual-slot",
+   "source": "NVIDIA H200 NVL datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "NVIDIA L40S",
+    "L40S"
+   ],
+   "type": "gpu",
+   "tdp_w": 350,
+   "pcie_gen": 4,
+   "pcie_lanes": 16,
+   "power_connector": "16-pin 12VHPWR",
+   "min_driver": "535.54.03",
+   "min_cuda": "12.2",
+   "memory_gb": 48,
+   "slot_width": 2,
+   "form_factor": "FHFL dual-slot",
+   "source": "NVIDIA L40S datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "NVIDIA L4",
+    "L4"
+   ],
+   "type": "gpu",
+   "tdp_w": 72,
+   "pcie_gen": 4,
+   "pcie_lanes": 16,
+   "power_connector": "slot-powered",
+   "min_driver": "525.60.13",
+   "min_cuda": "12.0",
+   "memory_gb": 24,
+   "slot_width": 1,
+   "form_factor": "HHHL single-slot",
+   "source": "NVIDIA L4 datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "NVIDIA RTX 6000 Ada",
+    "RTX 6000 Ada"
+   ],
+   "type": "gpu",
+   "tdp_w": 300,
+   "pcie_gen": 4,
+   "pcie_lanes": 16,
+   "power_connector": "16-pin 12VHPWR",
+   "min_driver": "525.60.13",
+   "min_cuda": "12.0",
+   "memory_gb": 48,
+   "slot_width": 2,
+   "form_factor": "FHFL dual-slot",
+   "source": "NVIDIA RTX 6000 Ada datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "NVIDIA A40",
+    "A40"
+   ],
+   "type": "gpu",
+   "tdp_w": 300,
+   "pcie_gen": 4,
+   "pcie_lanes": 16,
+   "power_connector": "8-pin EPS",
+   "min_driver": "450.80.02",
+   "min_cuda": "11.0",
+   "memory_gb": 48,
+   "slot_width": 2,
+   "form_factor": "FHFL dual-slot",
+   "source": "NVIDIA A40 datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "NVIDIA A30",
+    "A30"
+   ],
+   "type": "gpu",
+   "tdp_w": 165,
+   "pcie_gen": 4,
+   "pcie_lanes": 16,
+   "power_connector": "8-pin EPS",
+   "min_driver": "450.80.02",
+   "min_cuda": "11.0",
+   "memory_gb": 24,
+   "slot_width": 2,
+   "form_factor": "FHFL dual-slot",
+   "source": "NVIDIA A30 datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "NVIDIA T4",
+    "Tesla T4"
+   ],
+   "type": "gpu",
+   "tdp_w": 70,
+   "pcie_gen": 3,
+   "pcie_lanes": 16,
+   "power_connector": "slot-powered",
+   "min_driver": "418.40.04",
+   "min_cuda": "10.0",
+   "memory_gb": 16,
+   "slot_width": 1,
+   "form_factor": "HHHL single-slot",
+   "source": "NVIDIA T4 datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "NVIDIA V100",
+    "Tesla V100"
+   ],
+   "type": "gpu",
+   "tdp_w": 300,
+   "pcie_gen": 3,
+   "pcie_lanes": 16,
+   "power_connector": "8-pin EPS",
+   "min_driver": "396.26",
+   "min_cuda": "9.2",
+   "memory_gb": 32,
+   "slot_width": 2,
+   "form_factor": "FHFL dual-slot",
+   "source": "NVIDIA V100 datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "AMD Instinct MI300X",
+    "MI300X"
+   ],
+   "type": "gpu",
+   "tdp_w": 750,
+   "pcie_gen": 5,
+   "pcie_lanes": 16,
+   "power_connector": "OAM board",
+   "min_driver": "ROCm 6.0",
+   "min_cuda": "",
+   "memory_gb": 192,
+   "slot_width": 0,
+   "form_factor": "OAM",
+   "source": "AMD MI300X datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "AMD Instinct MI210",
+    "MI210"
+   ],
+   "type": "gpu",
+   "tdp_w": 300,
+   "pcie_gen": 4,
+   "pcie_lanes": 16,
+   "power_connector": "8-pin EPS",
+   "min_driver": "ROCm 5.4",
+   "min_cuda": "",
+   "memory_gb": 64,
+   "slot_width": 2,
+   "form_factor": "FHFL dual-slot",
+   "source": "AMD MI210 datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "Intel Gaudi2",
+    "Gaudi2"
+   ],
+   "type": "gpu",
+   "tdp_w": 600,
+   "pcie_gen": 4,
+   "pcie_lanes": 16,
+   "power_connector": "OAM board",
+   "min_driver": "SynapseAI 1.10",
+   "min_cuda": "",
+   "memory_gb": 96,
+   "slot_width": 0,
+   "form_factor": "OAM",
+   "source": "Intel Gaudi2 datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "Intel Xeon Gold 6338",
+    "CD8068904572501"
+   ],
+   "type": "cpu",
+   "tdp_w": 205,
+   "pcie_gen": 4,
+   "pcie_lanes": 64,
+   "socket": "LGA4189",
+   "source": "Intel Xeon Gold 6338 spec",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "Intel Xeon Gold 6348"
+   ],
+   "type": "cpu",
+   "tdp_w": 235,
+   "pcie_gen": 4,
+   "pcie_lanes": 64,
+   "socket": "LGA4189",
+   "source": "Intel Xeon Gold 6348 spec",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "Intel Xeon Platinum 8358"
+   ],
+   "type": "cpu",
+   "tdp_w": 250,
+   "pcie_gen": 4,
+   "pcie_lanes": 64,
+   "socket": "LGA4189",
+   "source": "Intel Xeon Platinum 8358 spec",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "Intel Xeon Platinum 8480"
+   ],
+   "type": "cpu",
+   "tdp_w": 350,
+   "pcie_gen": 5,
+   "pcie_lanes": 80,
+   "socket": "LGA4677",
+   "source": "Intel Xeon Platinum 8480+ spec",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "AMD EPYC 7763"
+   ],
+   "type": "cpu",
+   "tdp_w": 280,
+   "pcie_gen": 4,
+   "pcie_lanes": 128,
+   "socket": "SP3",
+   "source": "AMD EPYC 7763 spec",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "AMD EPYC 9654"
+   ],
+   "type": "cpu",
+   "tdp_w": 360,
+   "pcie_gen": 5,
+   "pcie_lanes": 128,
+   "socket": "SP5",
+   "source": "AMD EPYC 9654 spec",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "AMD EPYC 7543"
+   ],
+   "type": "cpu",
+   "tdp_w": 225,
+   "pcie_gen": 4,
+   "pcie_lanes": 128,
+   "socket": "SP3",
+   "source": "AMD EPYC 7543 spec",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "PWS-2K04A-1R",
+    "2000W Titanium CRPS"
+   ],
+   "type": "psu",
+   "watts": 2000,
+   "efficiency": "80+ Titanium",
+   "form_factor": "CRPS",
+   "source": "Supermicro PWS-2K04A-1R datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "PWS-3K00A",
+    "3000W Titanium CRPS"
+   ],
+   "type": "psu",
+   "watts": 3000,
+   "efficiency": "80+ Titanium",
+   "form_factor": "CRPS",
+   "source": "Supermicro PWS-3K00A datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "1600W Platinum CRPS"
+   ],
+   "type": "psu",
+   "watts": 1600,
+   "efficiency": "80+ Platinum",
+   "form_factor": "CRPS",
+   "source": "generic CRPS 1600W",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "MCX623106AN-CDAT",
+    "ConnectX-6 Dx 100GbE"
+   ],
+   "type": "nic",
+   "tdp_w": 19,
+   "pcie_gen": 4,
+   "pcie_lanes": 16,
+   "form_factor": "OCP 3.0",
+   "source": "NVIDIA ConnectX-6 Dx datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "MCX755106AS",
+    "ConnectX-7 400G"
+   ],
+   "type": "nic",
+   "tdp_w": 26,
+   "pcie_gen": 5,
+   "pcie_lanes": 16,
+   "form_factor": "OCP 3.0",
+   "source": "NVIDIA ConnectX-7 datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "MZQL23T8HCLS",
+    "3.84TB NVMe U.2"
+   ],
+   "type": "nvme",
+   "tdp_w": 11,
+   "pcie_gen": 4,
+   "pcie_lanes": 4,
+   "form_factor": "U.2 2.5in",
+   "source": "Samsung PM9A3 datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "M393A4K40DB3-CWE",
+    "32GB DDR4-3200 RDIMM"
+   ],
+   "type": "dimm",
+   "tdp_w": 7.5,
+   "capacity_gb": 32,
+   "form_factor": "DDR4 RDIMM",
+   "source": "Samsung DDR4 RDIMM datasheet",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "64GB DDR5-4800 RDIMM"
+   ],
+   "type": "dimm",
+   "tdp_w": 10.0,
+   "capacity_gb": 64,
+   "form_factor": "DDR5 RDIMM",
+   "source": "generic DDR5 RDIMM",
+   "reviewed": false
+  }
+ ]
+}

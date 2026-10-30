@@ -1,27 +1,34 @@
-"""Engineering dependency graph in SQLite.
+"""Engineering dependency graph.
 
 Nodes: component, net, footprint, artifact, firmware, test, device, release, revision.
 Edges: connects_to, placed_on, configured_by, validated_by, built_from, defined_in, part_of.
-SQLite keeps the MVP dependency-free; PostgreSQL (same two-table shape) is the production direction.
+
+Storage is pluggable (see :mod:`vcm_graph.backends`): local SQLite keeps a single engineer offline
+and dependency-free, Appwrite TablesDB shares the same two tables across a team. Every graph
+semantic below is backend-agnostic.
 """
 from __future__ import annotations
 
 import json
 import re
-import sqlite3
 
 from vcm_parsers import Design, design_from_revision
 
+from .backends import GraphBackend, open_backend
+
 GROUND_RE = re.compile(r"^(A|D|P|S)?GND\d*$|^VSS$|^0V$", re.I)
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS nodes(rev TEXT, id TEXT, type TEXT, name TEXT, props TEXT,
-                                 PRIMARY KEY(rev, id));
-CREATE TABLE IF NOT EXISTS edges(rev TEXT, src TEXT, dst TEXT, type TEXT, props TEXT);
-CREATE INDEX IF NOT EXISTS edges_src ON edges(rev, src, type);
-CREATE INDEX IF NOT EXISTS edges_dst ON edges(rev, dst, type);
-"""
 
+def global_nets(design) -> set[str]:
+    """Nets every component sits on, which therefore carry no blast-radius information.
+
+    Ground on a board and a PSU bank in a chassis are the same thing: shared by everything, so
+    following them would report the whole design as affected by any change.
+    """
+    declared: set[str] = set()
+    for node in (design.meta or {}).get("nodes", []):
+        declared |= set((node.get("power") or {}).get("domains") or {})
+    return declared
 
 def project_config(repo, rev: str) -> dict:
     """Parsed ``vcm.json`` of a revision (firmware links, tests, rails); {} if absent."""
@@ -35,52 +42,48 @@ def project_config(repo, rev: str) -> dict:
 
 
 class EngineeringGraph:
-    def __init__(self, db_path: str = ":memory:", rev: str = ""):
-        self.db = sqlite3.connect(db_path)
-        self.db.executescript(SCHEMA)
+    """Revision-scoped view over a :class:`~vcm_graph.backends.base.GraphBackend`."""
+
+    def __init__(self, db_path: str = ":memory:", rev: str = "",
+                 backend: GraphBackend | str | None = None):
+        self.backend = backend if isinstance(backend, GraphBackend) else open_backend(
+            db_path, backend)
         self.rev = rev
+
+    @property
+    def backend_name(self) -> str:
+        return self.backend.name
 
     # ---- writes ----------------------------------------------------
     def clear(self) -> None:
-        self.db.execute("DELETE FROM nodes WHERE rev=?", (self.rev,))
-        self.db.execute("DELETE FROM edges WHERE rev=?", (self.rev,))
+        self.backend.clear(self.rev)
 
     def add_node(self, node_id: str, type_: str, name: str, **props) -> None:
-        self.db.execute("INSERT OR REPLACE INTO nodes VALUES(?,?,?,?,?)",
-                        (self.rev, node_id, type_, name, json.dumps(props, sort_keys=True)))
+        self.backend.put_node(self.rev, node_id, type_, name, json.dumps(props, sort_keys=True))
 
     def add_edge(self, src: str, dst: str, type_: str, **props) -> None:
-        self.db.execute("INSERT INTO edges VALUES(?,?,?,?,?)",
-                        (self.rev, src, dst, type_, json.dumps(props, sort_keys=True)))
+        self.backend.put_edge(self.rev, src, dst, type_, json.dumps(props, sort_keys=True))
+
+    def flush(self) -> None:
+        self.backend.flush()
 
     # ---- reads -----------------------------------------------------
     def node(self, node_id: str) -> dict | None:
-        row = self.db.execute("SELECT id,type,name,props FROM nodes WHERE rev=? AND id=?",
-                              (self.rev, node_id)).fetchone()
+        row = self.backend.get_node(self.rev, node_id)
         return {"id": row[0], "type": row[1], "name": row[2], **json.loads(row[3])} if row else None
 
     def nodes(self, type_: str | None = None) -> list[dict]:
-        q, a = "SELECT id FROM nodes WHERE rev=?", [self.rev]
-        if type_:
-            q, a = q + " AND type=?", a + [type_]
-        return [self.node(r[0]) for r in self.db.execute(q + " ORDER BY id", a)]
+        return [self.node(i) for i in self.backend.node_ids(self.rev, type_)]
 
     def out(self, node_id: str, edge_type: str | None = None) -> list[tuple[str, dict]]:
-        q, a = "SELECT dst,props FROM edges WHERE rev=? AND src=?", [self.rev, node_id]
-        if edge_type:
-            q, a = q + " AND type=?", a + [edge_type]
-        return [(r[0], json.loads(r[1])) for r in self.db.execute(q + " ORDER BY dst", a)]
+        return [(d, json.loads(p)) for d, p in self.backend.out_edges(self.rev, node_id, edge_type)]
 
     def into(self, node_id: str, edge_type: str | None = None) -> list[tuple[str, dict]]:
-        q, a = "SELECT src,props FROM edges WHERE rev=? AND dst=?", [self.rev, node_id]
-        if edge_type:
-            q, a = q + " AND type=?", a + [edge_type]
-        return [(r[0], json.loads(r[1])) for r in self.db.execute(q + " ORDER BY src", a)]
+        return [(s, json.loads(p)) for s, p in self.backend.in_edges(self.rev, node_id, edge_type)]
 
     def stats(self) -> dict:
-        n = dict(self.db.execute("SELECT type,COUNT(*) FROM nodes WHERE rev=? GROUP BY type", (self.rev,)))
-        e = dict(self.db.execute("SELECT type,COUNT(*) FROM edges WHERE rev=? GROUP BY type", (self.rev,)))
-        return {"nodes": n, "edges": e}
+        n, e = self.backend.counts(self.rev)
+        return {"nodes": n, "edges": e, "backend": self.backend.name}
 
     def neighbors_via_nets(self, comp_id: str) -> list[dict]:
         """Components sharing a non-ground net with comp_id."""
@@ -136,17 +139,23 @@ class EngineeringGraph:
         }
 
 
-def build_graph(repo, rev: str, design: Design | None = None, db_path: str | None = None) -> EngineeringGraph:
-    """(Re)build the graph of ``rev``; persisted to ``.vcm/graph.db`` unless db_path given."""
+def build_graph(repo, rev: str, design: Design | None = None, db_path: str | None = None,
+                backend: GraphBackend | str | None = None) -> EngineeringGraph:
+    """(Re)build the graph of ``rev``.
+
+    Persisted to ``.vcm/graph.db`` by default; pass ``backend="appwrite"`` (or set
+    ``VCM_GRAPH_BACKEND``) to build into the shared Appwrite TablesDB store instead.
+    """
     revision = repo.get_revision(rev)
     design = design or design_from_revision(repo, revision)
-    g = EngineeringGraph(db_path or str(repo.dir / "graph.db"), revision.id)
+    g = EngineeringGraph(db_path or str(repo.dir / "graph.db"), revision.id, backend)
     g.clear()
     rid = f"revision:{revision.id}"
     g.add_node(rid, "revision", revision.id[:10], message=revision.message)
     for path, art in revision.artifacts.items():
         g.add_node(f"artifact:{path}", "artifact", path, category=art.category, hash=art.hash)
     cfg = project_config(repo, revision.id)
+    globals_ = global_nets(design)
     for ref, c in design.components.items():
         cid = f"component:{ref}"
         g.add_node(cid, "component", ref, value=c.value, footprint=c.footprint, mpn=c.mpn)
@@ -160,7 +169,8 @@ def build_graph(repo, rev: str, design: Design | None = None, db_path: str | Non
                     g.add_edge(cid, f"artifact:{p}", "defined_in", kind=kind)
         for pad, net in c.pads.items():
             if net:
-                g.add_node(f"net:{net}", "net", net, ground=bool(GROUND_RE.match(net)))
+                g.add_node(f"net:{net}", "net", net,
+                           ground=bool(GROUND_RE.match(net)) or net in globals_)
                 g.add_edge(cid, f"net:{net}", "connects_to", pad=pad)
     for link in cfg.get("firmware_links", []):
         for path in link.get("paths", []):
@@ -182,5 +192,5 @@ def build_graph(repo, rev: str, design: Design | None = None, db_path: str | Non
     for dev in repo.list_records("devices"):
         g.add_node(f"device:{dev['serial']}", "device", dev["serial"], batch=dev.get("batch", ""))
         g.add_edge(f"device:{dev['serial']}", f"release:{dev['release']}", "built_from")
-    g.db.commit()
+    g.flush()
     return g

@@ -7,37 +7,30 @@ Every finding has exactly one ``confidence_class``:
 """
 from __future__ import annotations
 
-import json
 import re
-from importlib import resources
 
 from vcm_diff import diff_designs
 from vcm_graph import build_graph, project_config
 from vcm_parsers import Component, Design, design_from_revision
 from vcm_validation import compare_validation
 
+from .catalog import PROJECT_CATALOG_DIR, Catalog, default_catalog
 from .provider import LLMProvider, NoopProvider
+from .rules_datacenter import datacenter_rules, is_node_design, node_meta
 
 VERIFIED, RULE_BASED, SPECULATIVE = "verified", "rule_based", "speculative"
 CLASSES = (VERIFIED, RULE_BASED, SPECULATIVE)
 AMBIENT_C = 40.0
-_PARTS: list[dict] | None = None
 
 
 def load_parts() -> list[dict]:
-    global _PARTS
-    if _PARTS is None:
-        text = resources.files("vcm_ai").joinpath("data/components.json").read_text()
-        _PARTS = json.loads(text)["parts"]
-    return _PARTS
+    """Every part the default catalog knows."""
+    return default_catalog().parts
 
 
 def lookup(c: Component) -> dict | None:
-    keys = [s.upper() for s in (c.mpn, c.value) if s]
-    for part in load_parts():
-        if any(k.startswith(m.upper()) for k in keys for m in part["match"]):
-            return part
-    return None
+    """Catalog entry for a component, or None when the catalog has never heard of it."""
+    return default_catalog().lookup(c)
 
 
 def parse_uf(value: str) -> float | None:
@@ -55,8 +48,10 @@ def parse_volts(text: str) -> float | None:
 
 
 class _Builder:
-    def __init__(self, repo, a, b, da: Design, db: Design, cfg: dict):
+    def __init__(self, repo, a, b, da: Design, db: Design, cfg: dict,
+                 catalog: Catalog | None = None):
         self.repo, self.a, self.b, self.da, self.db, self.cfg = repo, a, b, da, db, cfg
+        self.catalog = catalog or default_catalog()
         self.findings: list[dict] = []
         self.retests: list[dict] = []
         self._n = {c: 0 for c in CLASSES}
@@ -117,7 +112,7 @@ class _Builder:
         for ref, c in self.db.components.items():
             if ref == exclude or net not in c.pads.values():
                 continue
-            part = lookup(c)
+            part = self.catalog.lookup(c)
             if ref in ext:
                 typ += ext[ref].get("typ_ma", 0)
                 peak += ext[ref].get("peak_ma", 0)
@@ -132,11 +127,23 @@ class _Builder:
 
 
 def _verified_diff_findings(b: _Builder, d: dict) -> None:
+    groups: dict[tuple, list[dict]] = {}
     for x in d["bom"]["replaced"]:
+        key = (x["old"]["value"], x["old"]["mpn"], x["new"]["value"], x["new"]["mpn"],
+               tuple(x["changed_fields"]))
+        groups.setdefault(key, []).append(x)
+    for items in groups.values():
+        x = items[0]
         o, n = x["old"], x["new"]
-        b.add(VERIFIED, "warning", f"{x['ref']} replaced: {o['value']} -> {n['value']}",
-              f"Changed fields: {', '.join(x['changed_fields'])}. Old part {o['mpn'] or o['lib_id']}, "
-              f"new part {n['mpn'] or n['lib_id']}.", b.ref_ev(x["ref"]), [x["ref"]])
+        refs = sorted(i["ref"] for i in items)
+        where = refs[0] if len(refs) == 1 else f"{len(refs)}x"
+        ev: list[dict] = []
+        for r in refs[:4]:
+            ev += b.ref_ev(r)
+        b.add(VERIFIED, "warning", f"{where} replaced: {o['value']} -> {n['value']}",
+              f"Affected: {', '.join(refs)}. Changed fields: {', '.join(x['changed_fields'])}. "
+              f"Old part {o['mpn'] or o['lib_id']}, new part {n['mpn'] or n['lib_id']}.",
+              ev, refs)
     for x in d["bom"]["value_changed"]:
         b.add(VERIFIED, "info", f"{x['ref']} value changed: {x['old_value']} -> {x['new_value']}",
               "Same part identity, different value.", b.ref_ev(x["ref"]), [x["ref"]])
@@ -167,17 +174,17 @@ def _verified_diff_findings(b: _Builder, d: dict) -> None:
 def _verified_graph_findings(b: _Builder, d: dict) -> None:
     graph = build_graph(b.repo, b.b.id, b.db)
     seen_fw: set[str] = set()
+    shared: dict[tuple, list[str]] = {}
     for ref in d["changed_refs"]:
         if ref not in b.db.components:
             continue
         aff = graph.affected_by(ref)
         if aff["components"]:
-            names = ", ".join(c["ref"] for c in aff["components"])
-            nets = sorted({n for c in aff["components"] for n in c["via_nets"]})
-            b.add(VERIFIED, "info", f"{ref} shares nets with {len(aff['components'])} components",
-                  f"Via nets {', '.join(nets)}: {names}. (ground nets are not followed)",
-                  b.ref_ev(ref) + [{"type": "ref", "ref": c["ref"]} for c in aff["components"]],
-                  [ref] + [c["ref"] for c in aff["components"]])
+            # key on the union with the component itself, so peers that reach the same set
+            # (each excluding only itself) collapse into one finding
+            key = (tuple(sorted({c["ref"] for c in aff["components"]} | {ref})),
+                   tuple(sorted({n for c in aff["components"] for n in c["via_nets"]})))
+            shared.setdefault(key, []).append(ref)
         for fw in aff["firmware"]:
             if fw["node"] in seen_fw:
                 continue
@@ -194,12 +201,26 @@ def _verified_graph_findings(b: _Builder, d: dict) -> None:
                      f"(affected by change to {ref})",
                      [e for e in (b.file_ev("vcm.json"),) if e] + [{"type": "ref", "ref": ref}])
 
+    # components that reach the same neighbours through the same connections share one finding
+    for (group, nets), refs in sorted(shared.items()):
+        others = [n for n in group if n not in set(refs)]
+        single = len(refs) == 1
+        subject = refs[0] if single else f"{len(refs)} changed components"
+        verb = "shares" if single else "share"
+        b.add(VERIFIED, "info",
+              f"{subject} {verb} connections with {len(others)} other components",
+              f"Changed: {', '.join(sorted(refs))}. Via {', '.join(nets)}: "
+              f"{', '.join(others) or 'none'}. (globally shared connections such as ground and "
+              "power domains are not followed, since every component sits on them)",
+              b.ref_ev(refs[0]) + [{"type": "ref", "ref": n} for n in others[:8]],
+              sorted(set(refs) | set(others)))
+
 
 def _regulator_rules(b: _Builder, d: dict) -> list[str]:
     changed = set(d["changed_refs"])
     ids: list[str] = []
     for ref, c in b.db.components.items():
-        part = lookup(c)
+        part = b.catalog.lookup(c)
         if not part or part["type"] not in ("ldo", "buck"):
             continue
         vin_net, vout_net = b.net_for(c, part, "VIN"), b.net_for(c, part, "VOUT")
@@ -207,9 +228,9 @@ def _regulator_rules(b: _Builder, d: dict) -> list[str]:
                     if r != ref and vout_net in x.pads.values() and r.startswith("C")]
         if not ({ref} | set(cap_refs)) & changed:
             continue
-        ev = b.ref_ev(ref) + [{"type": "db", "part": part["match"][0]}]
+        ev = b.ref_ev(ref) + [part_ev(part)]
         old_c = b.da.components.get(ref)
-        old_part = lookup(old_c) if old_c else None
+        old_part = b.catalog.lookup(old_c) if old_c else None
         # R: output current capability
         typ, peak, used, unknown = b.loads_on(vout_net, ref)
         imax = part["iout_max_ma"]
@@ -227,7 +248,7 @@ def _regulator_rules(b: _Builder, d: dict) -> list[str]:
             ids.append(b.add(RULE_BASED, "info", f"{ref} current headroom adequate", text, ev, [ref] + used))
         # R: output voltage vs load supply range
         for r in used:
-            lp = lookup(b.db.components[r])
+            lp = b.catalog.lookup(b.db.components[r])
             if lp and "supply_vmin" in lp and not lp["supply_vmin"] <= part["vout"] <= lp["supply_vmax"]:
                 ids.append(b.add(RULE_BASED, "critical", f"{ref} output outside {r} supply range",
                                  f"{part['vout']} V vs {lp['supply_vmin']}-{lp['supply_vmax']} V", ev, [ref, r]))
@@ -287,6 +308,78 @@ def _regulator_rules(b: _Builder, d: dict) -> list[str]:
     return ids
 
 
+def part_ev(part: dict) -> dict:
+    """Evidence link for a catalog entry, carrying whether its numbers were ever reviewed."""
+    return {"type": "db", "part": part["match"][0], "reviewed": bool(part.get("reviewed")),
+            "source": part.get("source", ""), "origin": part.get("_origin", "")}
+
+
+#: what an absent catalog entry actually costs, per domain. Being specific matters: a vague
+#: "no rules ran" is both unhelpful and, where manifest-declared values still drive rules, false.
+_SKIPPED_CHECKS = {
+    "node": ("driver-minimum, PCIe generation and power-connector checks, all of which read the "
+             "catalog"),
+    "board": ("current headroom, dropout, thermal, output-capacitor and pinout checks, all of "
+              "which read the catalog"),
+}
+_STILL_RAN = {
+    "node": (" Rules fed by values declared in the node manifest (power budget, chassis cooling, "
+             "PCIe lane counts) did still run for it."),
+    "board": "",
+}
+
+
+def _catalog_coverage_findings(b: _Builder, d: dict) -> dict:
+    """State plainly which changed parts the catalog could not reason about.
+
+    Without this the report is ambiguous in the one way it must never be: a reader cannot tell a
+    clean pass from a part the rules simply skipped. Each gap is a ``verified`` finding because it
+    is a fact about the catalog, not a heuristic about the board.
+    """
+    domain = "node" if is_node_design(b.db) else "board"
+    cov = b.catalog.coverage(b.db, d["changed_refs"],
+                             declared=set(b.cfg.get("external_loads", {})))
+    ev_base = [{"type": "db", "parts_in_catalog": cov["parts_in_catalog"]}]
+
+    # identical unknown parts produce identical disclosures; group them by what they are
+    by_part: dict[str, list[str]] = {}
+    for ref in cov["unknown"]:
+        c = b.db.components[ref]
+        by_part.setdefault(c.value or c.mpn or ref, []).append(ref)
+    for name, refs in sorted(by_part.items()):
+        mpn = b.db.components[refs[0]].mpn
+        subject = refs[0] if len(refs) == 1 else f"{len(refs)} components"
+        ev: list[dict] = []
+        for r in refs[:4]:
+            ev += b.ref_ev(r)
+        b.add(VERIFIED, "warning",
+              f"{subject}: {name} is not in the component catalog",
+              f"Affected: {', '.join(refs)}"
+              + (f" (part {mpn})" if mpn else "")
+              + f". The catalog has no entry, so VCM skipped {_SKIPPED_CHECKS[domain]}."
+              + _STILL_RAN[domain]
+              + " Absence of warnings from those checks is absence of knowledge, not evidence of "
+              f"a safe change. Add the part to {PROJECT_CATALOG_DIR}/ to have it checked.",
+              ev + ev_base, refs)
+
+    unreviewed = sorted({r for r in cov["known"]
+                         if not (b.catalog.lookup(b.db.components[r]) or {}).get("reviewed")})
+    cov["unreviewed"] = unreviewed
+    if cov["considered"]:
+        known = len(cov["known"])
+        caveat = (f" Catalog values for {', '.join(unreviewed)} have not been checked against a "
+                  "datasheet by a human; treat the rule-based findings that cite them as "
+                  "prompts to verify, not conclusions.") if unreviewed else ""
+        b.add(VERIFIED, "warning" if cov["unknown"] else "info",
+              f"Catalog covered {known} of {cov['considered']} changed components",
+              f"Known: {', '.join(cov['known']) or 'none'}. "
+              f"Unknown: {', '.join(cov['unknown']) or 'none'}. "
+              f"Not requiring a catalog entry: {', '.join(cov['passive']) or 'none'}. "
+              f"Declared directly in vcm.json: {', '.join(cov['declared']) or 'none'}. "
+              f"The catalog holds {cov['parts_in_catalog']} parts.{caveat}", ev_base)
+    return cov
+
+
 def _cap_rating_rules(b: _Builder, d: dict) -> None:
     for ref in d["changed_refs"]:
         c = b.db.components.get(ref)
@@ -314,14 +407,15 @@ def _firmware_rules(b: _Builder, d: dict, reg_ids: list[str]) -> list[str]:
             if path in b.b.artifacts:
                 text = b.repo.read_artifact(b.b, path).decode("utf-8", "replace")
                 lines += [f"{path}: {ln.strip()}" for ln in text.splitlines()
-                          if re.search(r"BROWNOUT|VDD|VOLT|SUPPLY", ln, re.I) and ln.strip().startswith("#define")]
+                          if re.search(r"BROWNOUT|VDD|VOLT|SUPPLY|POWER|CAP_W|DRIVER|CUDA", ln, re.I)
+                          and (ln.strip().startswith("#define") or "=" in ln)]
         ev = [e for e in (b.file_ev(p) for p in link.get("paths", [])) if e]
         ids.append(b.add(
-            RULE_BASED, "warning", f"Firmware for {comp} may depend on the changed supply",
-            "Supply-related settings should be reviewed against the new regulator"
+            RULE_BASED, "warning", f"Firmware pinned to {comp} may assume the previous hardware",
+            "Supply- and power-related settings should be reviewed against the replacement"
             + (": " + "; ".join(lines) if lines else "."), ev + b.ref_ev(comp), [comp], reg_ids[:1]))
-        b.retest("firmware brownout/reset behaviour check", RULE_BASED,
-                 f"{comp} firmware references supply settings", ev)
+        b.retest("firmware power-setting review", RULE_BASED,
+                 f"{comp} firmware references supply or power settings", ev)
     return ids
 
 
@@ -349,12 +443,46 @@ def _speculative(b: _Builder, d: dict, reg_ids: list[str]) -> None:
                   b.ref_ev(x["ref"]), [x["ref"]])
 
 
-def analyze(repo, rev_a: str, rev_b: str, provider: LLMProvider | None = None) -> dict:
+def _speculative_node(b: _Builder, d: dict, rule_ids: list[str]) -> None:
+    """Predictions that follow from the node rules but are not established by them."""
+    by_id = {f["id"]: f for f in b.findings}
+    power = [i for i in rule_ids if "power" in by_id[i]["title"].lower()
+             or "supply the node" in by_id[i]["title"]]
+    for fid in power:
+        if by_id[fid]["severity"] in ("critical", "warning"):
+            b.add(SPECULATIVE, "warning",
+                  "A supply failure under sustained load may drop the whole node",
+                  "If real draw approaches the budget, losing one supply removes the margin the "
+                  "redundancy policy assumes. Whether it actually trips depends on the workload's "
+                  "duty cycle and the PSU's overload behaviour; this is a prediction, not a "
+                  "measurement.", by_id[fid]["evidence"][:1], by_id[fid]["refs"], [fid])
+            break
+    thermal = [i for i in rule_ids if "cooling" in by_id[i]["title"].lower()]
+    for fid in thermal:
+        b.add(SPECULATIVE, "info", "Sustained training load may push inlet temperatures up",
+              "Rated cooling assumes a declared inlet temperature and clean filters. Rack "
+              "neighbours, altitude and recirculation all shift this and none of them are "
+              "modelled here.", by_id[fid]["evidence"][:1], by_id[fid]["refs"], [fid])
+        break
+    meta = node_meta(b.db)
+    gpus = [r for r, c in b.db.components.items()
+            if (c.lib_id or "").lower() == "gpu" and r in set(d["changed_refs"])]
+    if gpus and (meta.get("firmware") or {}).get("cuda"):
+        b.add(SPECULATIVE, "info", "Workload images may pin an older CUDA runtime",
+              f"The node declares CUDA {meta['firmware']['cuda']}. Container images built against "
+              "it are not guaranteed to use the new accelerators efficiently, and some frameworks "
+              "gate features on compute capability. Not verified against any image here.",
+              [{"type": "declared", "source": "node manifest"}], sorted(gpus)[:4])
+
+
+def analyze(repo, rev_a: str, rev_b: str, provider: LLMProvider | None = None,
+            catalog: Catalog | None = None) -> dict:
     """Impact analysis from rev_a to rev_b. Fully offline unless a non-default provider is passed."""
     a, bb = repo.get_revision(rev_a), repo.get_revision(rev_b)
     da, db = design_from_revision(repo, a), design_from_revision(repo, bb)
     d = diff_designs(da, db)
-    b = _Builder(repo, a, bb, da, db, project_config(repo, bb.id))
+    catalog = catalog or Catalog.load(project_dir=repo.root)
+    b = _Builder(repo, a, bb, da, db, project_config(repo, bb.id), catalog)
     _verified_diff_findings(b, d)
     _verified_graph_findings(b, d)
     try:
@@ -367,10 +495,16 @@ def analyze(repo, rev_a: str, rev_b: str, provider: LLMProvider | None = None) -
               [])
     except Exception as exc:  # validation evidence is advisory for the impact report
         b.add(VERIFIED, "info", "Validation comparison unavailable", str(exc), [])
-    reg_ids = _regulator_rules(b, d)
-    _cap_rating_rules(b, d)
-    _firmware_rules(b, d, reg_ids)
-    _speculative(b, d, reg_ids)
+    coverage = _catalog_coverage_findings(b, d)
+    if is_node_design(db):
+        rule_ids = datacenter_rules(b, d)
+        _firmware_rules(b, d, rule_ids)
+        _speculative_node(b, d, rule_ids)
+    else:
+        rule_ids = _regulator_rules(b, d)
+        _cap_rating_rules(b, d)
+        _firmware_rules(b, d, rule_ids)
+        _speculative(b, d, rule_ids)
     provider = provider or NoopProvider()
     summary_lines = [f"{f['id']} {f['title']}" for f in b.findings if f["confidence_class"] != SPECULATIVE]
     text = provider.complete("Summarise hardware change impact:\n" + "\n".join(summary_lines))
@@ -379,5 +513,8 @@ def analyze(repo, rev_a: str, rev_b: str, provider: LLMProvider | None = None) -
     counts = {c: sum(f["confidence_class"] == c for f in b.findings) for c in CLASSES}
     sev = {s: sum(f["severity"] == s for f in b.findings) for s in ("critical", "warning", "info")}
     return {"from": a.id, "to": bb.id, "provider": provider.name,
-            "summary": {"by_class": counts, "by_severity": sev, "changed_components": d["changed_refs"]},
+            "summary": {"by_class": counts, "by_severity": sev,
+                        "changed_components": d["changed_refs"],
+                        "catalog_coverage": coverage["ratio"]},
+            "catalog": {**coverage, **catalog.describe()},
             "findings": b.findings, "required_retests": b.retests, "diff_summary": d["summary"]}

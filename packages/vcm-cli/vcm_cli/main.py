@@ -7,9 +7,18 @@ import sys
 from pathlib import Path
 
 from vcm_ai import analyze, get_provider, to_markdown
+from vcm_ai.catalog import (
+    PROJECT_CATALOG_DIR,
+    USER_CATALOG,
+    Catalog,
+    read_file,
+)
 from vcm_core import NothingToCommit, Repository, VcmError
 from vcm_diff import diff_revisions, render_text
-from vcm_graph import build_graph
+from vcm_graph import build_graph, project_config
+from vcm_graph.backends.appwrite_backend import health as appwrite_health
+from vcm_graph.backends.appwrite_backend import provision as appwrite_provision
+from vcm_parsers import design_from_revision
 from vcm_trace import (
     affected_by_component,
     affected_by_revision,
@@ -284,9 +293,84 @@ def cmd_explain(args) -> int:
     return 0
 
 
-def cmd_graph(args) -> int:
+def cmd_catalog(args) -> int:
+    if args.catalog_cmd == "import":
+        parts = read_file(args.file)          # validates before anything is written
+        target = USER_CATALOG if args.scope == "user" else Path.cwd() / PROJECT_CATALOG_DIR
+        target.mkdir(parents=True, exist_ok=True)
+        dest = target / (Path(args.file).stem + ".json")
+        dest.write_text(json.dumps({"parts": [
+            {k: v for k, v in part.items() if k != "_origin"} for part in parts]},
+            indent=1, sort_keys=False) + "\n")
+        print(f"Imported {len(parts)} parts into {dest}")
+        return 0
+
+    catalog = Catalog.load(project_dir=Path.cwd())
+    if args.catalog_cmd == "list":
+        rows = [p for p in catalog.parts if not args.type or p.get("type") == args.type]
+        if args.json:
+            _dump([{k: v for k, v in p.items() if k != "sources"} for p in rows])
+            return 0
+        print(f"{len(rows)} parts ({catalog.describe()['reviewed']} datasheet-reviewed)")
+        for p in sorted(rows, key=lambda p: (p.get("type", ""), p["match"][0])):
+            flag = "reviewed" if p.get("reviewed") else "UNREVIEWED"
+            print(f"  {p['match'][0]:22} {p.get('type', ''):9} {flag:11} {p.get('source', '')}")
+        return 0
+
+    if args.catalog_cmd == "show":
+        part = catalog.find(args.mpn, args.mpn)
+        if part is None:
+            print(f"{args.mpn}: not in the catalog ({len(catalog.parts)} parts). "
+                  f"No electrical rules would be applied to it.", file=sys.stderr)
+            return 1
+        _dump(part)
+        return 0
+
+    # coverage
     repo = _repo(args)
-    g = build_graph(repo, args.rev)
+    revision = repo.get_revision(args.rev)
+    design = design_from_revision(repo, revision)
+    cov = catalog.coverage(design, declared=set(project_config(repo, revision.id)
+                                                .get("external_loads", {})))
+    cov.update(catalog.describe())
+    if args.json:
+        _dump(cov)
+        return 0
+    print(f"Catalog coverage for {args.rev}: {len(cov['known'])}/{cov['considered']} "
+          f"components ({cov['ratio']:.0%})")
+    print(f"  known:    {', '.join(cov['known']) or 'none'}")
+    print(f"  UNKNOWN:  {', '.join(cov['unknown']) or 'none'}")
+    print(f"  passives: {', '.join(cov['passive']) or 'none'}")
+    print(f"  declared: {', '.join(cov['declared']) or 'none'}  (load stated in vcm.json)")
+    print(f"  catalog:  {cov['parts']} parts, {cov['reviewed']} datasheet-reviewed")
+    if cov["unknown"]:
+        print(f"\nNo electrical rules run on the unknown parts above. Add them to "
+              f"{PROJECT_CATALOG_DIR}/ or ~/.vcm/catalog/ and re-run.")
+    return 0
+
+
+def cmd_graph(args) -> int:
+    if args.graph_cmd == "provision":
+        done = appwrite_provision()
+        _dump(done) if args.json else print(
+            f"Appwrite schema ready: {len(done['created'])} created, "
+            f"{len(done['existed'])} already present")
+        return 0
+    if args.graph_cmd == "health":
+        report = appwrite_health()
+        _dump(report)
+        return 0 if report["ok"] else 1
+
+    repo = _repo(args)
+    backend = getattr(args, "backend", None)
+    if args.graph_cmd == "push":
+        g = build_graph(repo, args.rev, backend=backend or "appwrite")
+        st = g.stats()
+        _dump(st) if args.json else print(
+            f"Pushed {args.rev} ({g.rev[:10]}) to {st['backend']}: "
+            f"{sum(st['nodes'].values())} nodes, {sum(st['edges'].values())} edges")
+        return 0
+    g = build_graph(repo, args.rev, backend=backend)
     if args.graph_cmd == "stats":
         _dump(g.stats())
         return 0
@@ -427,16 +511,47 @@ def build_parser() -> argparse.ArgumentParser:
 
     add("timeline", cmd_timeline, "hardware time machine", True)
 
+    c = sub.add_parser("catalog", help="component knowledge base behind rule-based findings")
+    c = c.add_subparsers(dest="catalog_cmd", required=True)
+    s = c.add_parser("list", help="every part the catalog knows")
+    s.set_defaults(fn=cmd_catalog)
+    s.add_argument("--type", help="filter by part type, e.g. ldo, buck, mcu")
+    s.add_argument("--json", action="store_true")
+    s = c.add_parser("show", help="catalog entry for one part number")
+    s.set_defaults(fn=cmd_catalog)
+    s.add_argument("mpn")
+    s = c.add_parser("coverage", help="which components of a revision the catalog can reason about")
+    s.set_defaults(fn=cmd_catalog)
+    s.add_argument("--rev", default="HEAD")
+    s.add_argument("--json", action="store_true")
+    s = c.add_parser("import", help="add parts from a JSON or CSV file")
+    s.set_defaults(fn=cmd_catalog)
+    s.add_argument("file")
+    s.add_argument("--scope", choices=["user", "project"], default="project",
+                   help="user: ~/.vcm/catalog; project: ./vcm-catalog (committed with the design)")
     g = sub.add_parser("graph", help="engineering dependency graph").add_subparsers(dest="graph_cmd", required=True)
+    backend_help = "graph store: 'sqlite' (local, default) or 'appwrite' (shared TablesDB)"
     s = g.add_parser("query", help="what is affected by changing a component")
     s.set_defaults(fn=cmd_graph)
     s.add_argument("--component", required=True)
     s.add_argument("--rev", default="HEAD")
     s.add_argument("--depth", type=int, default=1)
+    s.add_argument("--backend", choices=["sqlite", "appwrite"], help=backend_help)
     s.add_argument("--json", action="store_true")
     s = g.add_parser("stats")
     s.set_defaults(fn=cmd_graph)
     s.add_argument("--rev", default="HEAD")
+    s.add_argument("--backend", choices=["sqlite", "appwrite"], help=backend_help)
+    s = g.add_parser("push", help="build a revision into the shared Appwrite TablesDB store")
+    s.set_defaults(fn=cmd_graph)
+    s.add_argument("--rev", default="HEAD")
+    s.add_argument("--backend", choices=["sqlite", "appwrite"], help=backend_help)
+    s.add_argument("--json", action="store_true")
+    s = g.add_parser("provision", help="create the Appwrite database, tables and indexes")
+    s.set_defaults(fn=cmd_graph)
+    s.add_argument("--json", action="store_true")
+    s = g.add_parser("health", help="check the configured Appwrite store")
+    s.set_defaults(fn=cmd_graph)
     return p
 
 

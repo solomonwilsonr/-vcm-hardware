@@ -13,7 +13,8 @@ dependencies = []
 
 [project.optional-dependencies]
 api = ["fastapi>=0.110", "uvicorn>=0.29"]
-dev = ["pytest>=8", "httpx>=0.27", "fastapi>=0.110", "ruff>=0.4", "pyyaml>=6"]
+appwrite = ["appwrite>=27.1"]
+dev = ["pytest>=8", "httpx>=0.27", "fastapi>=0.110", "ruff>=0.4", "pyyaml>=6", "appwrite>=27.1"]
 
 [project.scripts]
 vcm = "vcm_cli.main:main"

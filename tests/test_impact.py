@@ -27,7 +27,7 @@ def test_regulator_swap_flags_current_and_thermal(sample_repo):
     rb = {f["title"]: f for f in by_class(rep, "rule_based")}
     assert rb["U1 cannot supply peak load on +3V3"]["severity"] == "critical"
     assert any("thermal" in t for t in rb)
-    assert any("Firmware for U2" in t for t in rb)
+    assert any("Firmware pinned to U2" in t for t in rb)  # domain-neutral wording
     verified = " ".join(f["title"] for f in by_class(rep, "verified"))
     assert "U1 replaced" in verified and "U1 footprint changed" in verified
     retests = {r["name"] for r in rep["required_retests"]}

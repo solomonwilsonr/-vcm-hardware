@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# End-to-end VCM demo: commit two board revisions, then diff, impact, validate, release, trace.
+# End-to-end VCM demo on a GPU node: commit two fleet configurations, then diff, impact,
+# validate, release, and trace which physical units are affected.
 # Usage: examples/demo.sh   (set VCM_DEMO_DIR to choose the workspace; it is wiped on each run)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="${VCM_DEMO_DIR:-$ROOT/demo-workspace}"
-SAMPLE="$ROOT/examples/sample-pcb"
+SAMPLE="$ROOT/examples/gpu-node"
 export VCM_AUTHOR="${VCM_AUTHOR:-demo}"
 
 if command -v vcm >/dev/null 2>&1; then
@@ -23,57 +24,59 @@ rm -rf "$WORK"
 mkdir -p "$WORK"
 cd "$WORK"
 
-step "1. Initialise a repository and commit v1.0"
+step "1. Initialise a repository and commit the current fleet configuration"
 vcm init .
 sync_tree "$SAMPLE/v1.0"
-vcm commit -m "v1.0 sensor node: AMS1117-3.3 LDO" --author alice --tag v1.0
+vcm commit -m "v1.0 gpu-node-01: 8x A100 PCIe 40GB" --author alice --tag v1.0
 
-step "2. Commit v1.1 (LDO swapped, output capacitor changed)"
+step "2. Commit the proposed upgrade (A100 -> H100 NVL, same chassis and PSUs)"
 sync_tree "$SAMPLE/v1.1"
-vcm commit -m "v1.1 swap to MCP1700 LDO, ceramic output cap" --author bob --tag v1.1
+vcm commit -m "v1.1 upgrade accelerators to H100 NVL 94GB" --author bob --tag v1.1
 vcm log
 
-step "3. What exactly changed? (semantic diff)"
+step "3. What exactly changed? (semantic diff of the node inventory)"
 vcm diff v1.0 v1.1
 
-step "4. What else could that change affect? (graph query and impact report)"
-vcm graph query --component U1 --rev v1.1
+step "4. What does the component catalog actually know about this node?"
+vcm catalog coverage --rev v1.1
+
+step "5. What else could that change affect? (graph query and impact report)"
+vcm graph query --component GPU0 --rev v1.1
 vcm impact v1.0 v1.1
 
-step "5. Validation (built-in checks; kicad-cli is used only if installed)"
-vcm bom validate --rev v1.1
+step "6. Validation (built-in checks on the committed configuration)"
 vcm validate --rev v1.0
-vcm validate --rev v1.1 --kicad --compare v1.0
+vcm validate --rev v1.1 --compare v1.0
 
-step "6. Release manifests and reproducibility check"
+step "7. Release manifests and reproducibility check"
 vcm release create R1.0 --rev v1.0
 vcm release create R1.1 --rev v1.1 --out "$WORK/.vcm/R1.1.manifest.json"
 vcm release verify R1.0
 vcm release verify R1.1
 
-step "7. Physical devices: register, QR, passport"
-vcm device register SN-0001 --release R1.0 --batch BATCH-A
-vcm device register SN-0002 --release R1.0 --batch BATCH-A
-vcm device register SN-0003 --release R1.1 --batch BATCH-B
-vcm device passport SN-0003 --no-svg | sed -n '1,40p'
+step "8. Physical units: register nodes against a release, with QR and passport"
+vcm device register NODE-0001 --release R1.0 --batch RACK-12
+vcm device register NODE-0002 --release R1.0 --batch RACK-12
+vcm device register NODE-0003 --release R1.1 --batch RACK-13
+vcm device passport NODE-0003 --no-svg | sed -n '1,40p'
 
-step "8. Which devices are affected?"
-vcm device affected --component U1 --value AMS1117-3.3
+step "9. Which physical units are affected? (the fleet question)"
+vcm device affected --component GPU0 --value "NVIDIA A100 PCIe 40GB"
 vcm device affected --revision v1.1
 
-step "9. Rollback plan v1.1 -> v1.0 (what is software-reversible?)"
+step "10. Rollback plan v1.1 -> v1.0 (what is reversible without a site visit?)"
 vcm rollback plan v1.0 --from v1.1
 
-step "10. Hardware pull request and time machine"
-vcm pr open --base v1.0 --head v1.1 --title "Swap LDO to MCP1700" --author bob
+step "11. Change review and time machine"
+vcm pr open --base v1.0 --head v1.1 --title "Upgrade gpu-node-01 to H100 NVL" --author bob
 vcm pr approve 1 --by alice
 vcm timeline
 
-step "11. Explain the change end to end (first 30 lines)"
+step "12. Explain the change end to end (first 30 lines)"
 vcm explain v1.0 v1.1 | sed -n '1,30p'
 
 step "Tamper check: corrupt a pinned blob and re-verify (expected to FAIL)"
-HASH="$(sha256sum firmware/main.c | cut -d' ' -f1)"
+HASH="$(sha256sum firmware/driver.conf | cut -d' ' -f1)"
 BLOB=".vcm/objects/${HASH:0:2}/${HASH:2}"
 chmod u+w "$BLOB" && printf 'tampered' >> "$BLOB"
 if vcm release verify R1.1; then echo "ERROR: tampering was not detected" >&2; exit 1; else echo "(tampering detected as expected)"; fi

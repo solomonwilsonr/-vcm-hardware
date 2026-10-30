@@ -1,0 +1,1066 @@
+{
+ "_note": "Starter catalog. Values are headline datasheet figures entered for engineering triage, NOT a datasheet review: every entry is marked \"reviewed\": false and must be checked against the manufacturer datasheet before any production decision. Rth_JA values are package-typical estimates, not part data -- real thermal performance depends on copper area and layout. Override any entry with a file in ~/.vcm/catalog/ or vcm-catalog/ next to your design.",
+ "parts": [
+  {
+   "match": [
+    "AMS1117-3.3",
+    "AMS1117"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 1000,
+   "vin_max": 15.0,
+   "dropout_v": 1.3,
+   "iq_ua": 5000,
+   "package": "SOT-223",
+   "min_cout_uf": 22,
+   "output_cap": "requires_esr",
+   "rth_ja_c_per_w": 90.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "AMS1117 datasheet (AMS)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-223, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "LM1117-3.3",
+    "LM1117"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 800,
+   "vin_max": 15.0,
+   "dropout_v": 1.2,
+   "iq_ua": 5000,
+   "package": "SOT-223",
+   "min_cout_uf": 10,
+   "output_cap": "requires_esr",
+   "rth_ja_c_per_w": 90.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "LM1117 datasheet (TI)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-223, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "NCP1117-3.3",
+    "NCP1117"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 1000,
+   "vin_max": 20.0,
+   "dropout_v": 1.2,
+   "iq_ua": 10000,
+   "package": "SOT-223",
+   "min_cout_uf": 10,
+   "output_cap": "requires_esr",
+   "rth_ja_c_per_w": 90.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "NCP1117 datasheet (onsemi)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-223, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "LD1117-3.3",
+    "LD1117"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 800,
+   "vin_max": 15.0,
+   "dropout_v": 1.2,
+   "iq_ua": 5000,
+   "package": "SOT-223",
+   "min_cout_uf": 10,
+   "output_cap": "requires_esr",
+   "rth_ja_c_per_w": 90.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "LD1117 datasheet (ST)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-223, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "AP2112K-3.3",
+    "AP2112K",
+    "AP2112"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 600,
+   "vin_max": 6.0,
+   "dropout_v": 0.25,
+   "iq_ua": 55,
+   "package": "SOT-23-5",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 220.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "AP2112 datasheet (Diodes Inc)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23-5, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "MCP1700-3302",
+    "MCP1700"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 250,
+   "vin_max": 6.0,
+   "dropout_v": 0.178,
+   "iq_ua": 1.6,
+   "package": "SOT-23",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 230.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "MCP1700 datasheet (Microchip)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "MCP1703-3302",
+    "MCP1703"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 250,
+   "vin_max": 16.0,
+   "dropout_v": 0.65,
+   "iq_ua": 2.0,
+   "package": "SOT-23",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 230.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "MCP1703 datasheet (Microchip)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "XC6206P332",
+    "XC6206"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 200,
+   "vin_max": 6.0,
+   "dropout_v": 0.25,
+   "iq_ua": 1.0,
+   "package": "SOT-23",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 230.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "XC6206 datasheet (Torex)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "HT7333"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 250,
+   "vin_max": 12.0,
+   "dropout_v": 0.1,
+   "iq_ua": 4.0,
+   "package": "SOT-23",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 230.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "HT7333 datasheet (Holtek)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "RT9013-33",
+    "RT9013"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 500,
+   "vin_max": 5.5,
+   "dropout_v": 0.25,
+   "iq_ua": 25,
+   "package": "SOT-23-5",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 220.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "RT9013 datasheet (Richtek)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23-5, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "RT9080-33",
+    "RT9080"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 600,
+   "vin_max": 5.5,
+   "dropout_v": 0.25,
+   "iq_ua": 50,
+   "package": "SOT-23-5",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 220.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "RT9080 datasheet (Richtek)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23-5, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "TLV70033",
+    "TLV700"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 200,
+   "vin_max": 5.5,
+   "dropout_v": 0.17,
+   "iq_ua": 31,
+   "package": "SOT-23-5",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 220.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "TLV700 datasheet (TI)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23-5, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "TLV75533",
+    "TLV755"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 500,
+   "vin_max": 5.5,
+   "dropout_v": 0.2,
+   "iq_ua": 25,
+   "package": "SOT-23-5",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 220.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "TLV755P datasheet (TI)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23-5, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "TLV75733",
+    "TLV757"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 1000,
+   "vin_max": 5.5,
+   "dropout_v": 0.28,
+   "iq_ua": 45,
+   "package": "SOT-23-5",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 220.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "TLV757P datasheet (TI)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23-5, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "TPS7A0233",
+    "TPS7A02"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 200,
+   "vin_max": 5.5,
+   "dropout_v": 0.17,
+   "iq_ua": 0.025,
+   "package": "SOT-23-5",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 220.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "TPS7A02 datasheet (TI)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23-5, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "TPS73633",
+    "TPS736"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 400,
+   "vin_max": 5.5,
+   "dropout_v": 0.075,
+   "iq_ua": 400,
+   "package": "SOT-23-5",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 220.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "TPS736 datasheet (TI)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23-5, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "MIC5205-3.3",
+    "MIC5205"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 150,
+   "vin_max": 16.0,
+   "dropout_v": 0.165,
+   "iq_ua": 600,
+   "package": "SOT-23-5",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 220.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "MIC5205 datasheet (Microchip)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23-5, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "LP2985-3.3",
+    "LP2985"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 150,
+   "vin_max": 16.0,
+   "dropout_v": 0.28,
+   "iq_ua": 850,
+   "package": "SOT-23-5",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 220.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "LP2985 datasheet (TI)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23-5, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "SPX3819-3.3",
+    "SPX3819"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 500,
+   "vin_max": 20.0,
+   "dropout_v": 0.34,
+   "iq_ua": 90,
+   "package": "SOT-23-5",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 220.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "SPX3819 datasheet (MaxLinear)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23-5, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "ME6211C33",
+    "ME6211"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 500,
+   "vin_max": 6.0,
+   "dropout_v": 0.25,
+   "iq_ua": 40,
+   "package": "SOT-23-5",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 220.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "ME6211 datasheet (Microne)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23-5, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "SGM2019-3.3",
+    "SGM2019"
+   ],
+   "type": "ldo",
+   "vout": 3.3,
+   "iout_max_ma": 300,
+   "vin_max": 6.0,
+   "dropout_v": 0.2,
+   "iq_ua": 40,
+   "package": "SOT-23-5",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 220.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "SGM2019 datasheet (SGMICRO)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23-5, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "AMS1117-5.0"
+   ],
+   "type": "ldo",
+   "vout": 5.0,
+   "iout_max_ma": 1000,
+   "vin_max": 15.0,
+   "dropout_v": 1.3,
+   "iq_ua": 5000,
+   "package": "SOT-223",
+   "min_cout_uf": 22,
+   "output_cap": "requires_esr",
+   "rth_ja_c_per_w": 90.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "AMS1117 datasheet (AMS)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-223, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "AP2112K-1.8"
+   ],
+   "type": "ldo",
+   "vout": 1.8,
+   "iout_max_ma": 600,
+   "vin_max": 6.0,
+   "dropout_v": 0.25,
+   "iq_ua": 55,
+   "package": "SOT-23-5",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 220.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "AP2112 datasheet (Diodes Inc)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23-5, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "MCP1700-1802"
+   ],
+   "type": "ldo",
+   "vout": 1.8,
+   "iout_max_ma": 250,
+   "vin_max": 6.0,
+   "dropout_v": 0.178,
+   "iq_ua": 1.6,
+   "package": "SOT-23",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 230.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "MCP1700 datasheet (Microchip)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "TLV70018",
+    "TLV70012"
+   ],
+   "type": "ldo",
+   "vout": 1.8,
+   "iout_max_ma": 200,
+   "vin_max": 5.5,
+   "dropout_v": 0.17,
+   "iq_ua": 31,
+   "package": "SOT-23-5",
+   "min_cout_uf": 1,
+   "output_cap": "ceramic_ok",
+   "rth_ja_c_per_w": 220.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "TLV700 datasheet (TI)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-23-5, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "LM1117-5.0"
+   ],
+   "type": "ldo",
+   "vout": 5.0,
+   "iout_max_ma": 800,
+   "vin_max": 15.0,
+   "dropout_v": 1.2,
+   "iq_ua": 5000,
+   "package": "SOT-223",
+   "min_cout_uf": 10,
+   "output_cap": "requires_esr",
+   "rth_ja_c_per_w": 90.0,
+   "tj_max_c": 125.0,
+   "pinout": {
+    "1": "GND",
+    "2": "VOUT",
+    "3": "VIN"
+   },
+   "source": "LM1117 datasheet (TI)",
+   "reviewed": false,
+   "sources": {
+    "rth_ja_c_per_w": "package-typical estimate for SOT-223, not a datasheet value"
+   }
+  },
+  {
+   "match": [
+    "TPS54331"
+   ],
+   "type": "buck",
+   "vout": 3.3,
+   "iout_max_ma": 3000,
+   "vin_max": 28.0,
+   "dropout_v": 0.5,
+   "min_cout_uf": 22,
+   "output_cap": "ceramic_ok",
+   "iq_ua": 1500,
+   "rth_ja_c_per_w": 70.0,
+   "tj_max_c": 125.0,
+   "package": "SOIC-8",
+   "pinout": {
+    "1": "BOOT",
+    "2": "VIN",
+    "3": "EN",
+    "7": "GND"
+   },
+   "source": "TPS54331 datasheet (TI)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "MP1584"
+   ],
+   "type": "buck",
+   "vout": 3.3,
+   "iout_max_ma": 3000,
+   "vin_max": 28.0,
+   "dropout_v": 0.5,
+   "min_cout_uf": 22,
+   "output_cap": "ceramic_ok",
+   "iq_ua": 100,
+   "rth_ja_c_per_w": 90.0,
+   "tj_max_c": 125.0,
+   "package": "SOIC-8",
+   "source": "MP1584 datasheet (MPS)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "AP63203"
+   ],
+   "type": "buck",
+   "vout": 3.3,
+   "iout_max_ma": 2000,
+   "vin_max": 16.0,
+   "dropout_v": 0.3,
+   "min_cout_uf": 22,
+   "output_cap": "ceramic_ok",
+   "iq_ua": 22,
+   "rth_ja_c_per_w": 85.0,
+   "tj_max_c": 125.0,
+   "package": "TSOT-23-6",
+   "source": "AP63203 datasheet (Diodes Inc)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "TPS62840"
+   ],
+   "type": "buck",
+   "vout": 3.3,
+   "iout_max_ma": 750,
+   "vin_max": 6.5,
+   "dropout_v": 0.1,
+   "min_cout_uf": 10,
+   "output_cap": "ceramic_ok",
+   "iq_ua": 0.06,
+   "rth_ja_c_per_w": 95.0,
+   "tj_max_c": 125.0,
+   "package": "WSON-8",
+   "source": "TPS62840 datasheet (TI)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "LM2596"
+   ],
+   "type": "buck",
+   "vout": 3.3,
+   "iout_max_ma": 3000,
+   "vin_max": 40.0,
+   "dropout_v": 2.0,
+   "min_cout_uf": 100,
+   "output_cap": "requires_esr",
+   "iq_ua": 5000,
+   "rth_ja_c_per_w": 60.0,
+   "tj_max_c": 125.0,
+   "package": "TO-263",
+   "source": "LM2596 datasheet (TI)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "ESP32-WROOM-32",
+    "ESP32-WROOM"
+   ],
+   "type": "module",
+   "supply_vmin": 3.0,
+   "supply_vmax": 3.6,
+   "i_typ_ma": 80,
+   "i_peak_ma": 500,
+   "source": "ESP32-WROOM-32 datasheet (Espressif)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "ESP32-S3-WROOM"
+   ],
+   "type": "module",
+   "supply_vmin": 3.0,
+   "supply_vmax": 3.6,
+   "i_typ_ma": 90,
+   "i_peak_ma": 500,
+   "source": "ESP32-S3-WROOM-1 datasheet (Espressif)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "ESP8266",
+    "ESP-12F",
+    "ESP-12E"
+   ],
+   "type": "module",
+   "supply_vmin": 3.0,
+   "supply_vmax": 3.6,
+   "i_typ_ma": 80,
+   "i_peak_ma": 430,
+   "source": "ESP8266EX datasheet (Espressif)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "STM32F103"
+   ],
+   "type": "mcu",
+   "supply_vmin": 2.0,
+   "supply_vmax": 3.6,
+   "i_typ_ma": 50,
+   "i_peak_ma": 100,
+   "source": "STM32F103 datasheet (ST)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "STM32G031",
+    "STM32G0"
+   ],
+   "type": "mcu",
+   "supply_vmin": 2.0,
+   "supply_vmax": 3.6,
+   "i_typ_ma": 10,
+   "i_peak_ma": 40,
+   "source": "STM32G0 datasheet (ST)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "STM32L4"
+   ],
+   "type": "mcu",
+   "supply_vmin": 1.71,
+   "supply_vmax": 3.6,
+   "i_typ_ma": 10,
+   "i_peak_ma": 60,
+   "source": "STM32L4 datasheet (ST)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "ATMEGA328",
+    "ATMEGA328P"
+   ],
+   "type": "mcu",
+   "supply_vmin": 1.8,
+   "supply_vmax": 5.5,
+   "i_typ_ma": 12,
+   "i_peak_ma": 30,
+   "source": "ATmega328P datasheet (Microchip)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "RP2040"
+   ],
+   "type": "mcu",
+   "supply_vmin": 1.8,
+   "supply_vmax": 3.3,
+   "i_typ_ma": 40,
+   "i_peak_ma": 100,
+   "source": "RP2040 datasheet (Raspberry Pi)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "NRF52832",
+    "NRF52840"
+   ],
+   "type": "mcu",
+   "supply_vmin": 1.7,
+   "supply_vmax": 3.6,
+   "i_typ_ma": 7,
+   "i_peak_ma": 20,
+   "source": "nRF52 datasheet (Nordic)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "ATSAMD21",
+    "SAMD21"
+   ],
+   "type": "mcu",
+   "supply_vmin": 1.62,
+   "supply_vmax": 3.63,
+   "i_typ_ma": 10,
+   "i_peak_ma": 30,
+   "source": "SAMD21 datasheet (Microchip)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "SIM800",
+    "SIM7600"
+   ],
+   "type": "module",
+   "supply_vmin": 3.4,
+   "supply_vmax": 4.4,
+   "i_typ_ma": 100,
+   "i_peak_ma": 2000,
+   "source": "SIM800/7600 hardware design guide (SIMCom)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "RFM95",
+    "SX1276"
+   ],
+   "type": "module",
+   "supply_vmin": 1.8,
+   "supply_vmax": 3.7,
+   "i_typ_ma": 12,
+   "i_peak_ma": 120,
+   "source": "SX1276 datasheet (Semtech)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "CP2102"
+   ],
+   "type": "ic",
+   "supply_vmin": 3.0,
+   "supply_vmax": 3.6,
+   "i_typ_ma": 20,
+   "i_peak_ma": 26,
+   "source": "CP2102 datasheet (Silicon Labs)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "CH340"
+   ],
+   "type": "ic",
+   "supply_vmin": 3.3,
+   "supply_vmax": 5.5,
+   "i_typ_ma": 12,
+   "i_peak_ma": 30,
+   "source": "CH340 datasheet (WCH)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "W25Q32",
+    "W25Q64",
+    "W25Q128"
+   ],
+   "type": "ic",
+   "supply_vmin": 2.7,
+   "supply_vmax": 3.6,
+   "i_typ_ma": 4,
+   "i_peak_ma": 25,
+   "source": "W25Q series datasheet (Winbond)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "BME280",
+    "BMP280"
+   ],
+   "type": "sensor",
+   "supply_vmin": 1.71,
+   "supply_vmax": 3.6,
+   "i_typ_ma": 1,
+   "i_peak_ma": 1,
+   "source": "BME280 datasheet (Bosch)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "SHT30",
+    "SHT31"
+   ],
+   "type": "sensor",
+   "supply_vmin": 2.15,
+   "supply_vmax": 5.5,
+   "i_typ_ma": 1,
+   "i_peak_ma": 2,
+   "source": "SHT3x datasheet (Sensirion)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "MPU6050",
+    "MPU-6050"
+   ],
+   "type": "sensor",
+   "supply_vmin": 2.375,
+   "supply_vmax": 3.46,
+   "i_typ_ma": 4,
+   "i_peak_ma": 5,
+   "source": "MPU-6000/6050 datasheet (InvenSense)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "DS18B20"
+   ],
+   "type": "sensor",
+   "supply_vmin": 3.0,
+   "supply_vmax": 5.5,
+   "i_typ_ma": 1,
+   "i_peak_ma": 2,
+   "source": "DS18B20 datasheet (Maxim)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "SSD1306"
+   ],
+   "type": "display",
+   "supply_vmin": 1.65,
+   "supply_vmax": 3.3,
+   "i_typ_ma": 10,
+   "i_peak_ma": 30,
+   "source": "SSD1306 datasheet (Solomon Systech)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "MICROSD",
+    "SD-CARD"
+   ],
+   "type": "connector",
+   "supply_vmin": 2.7,
+   "supply_vmax": 3.6,
+   "i_typ_ma": 30,
+   "i_peak_ma": 200,
+   "source": "SD Physical Layer Spec (SD Association)",
+   "reviewed": false
+  }
+ ]
+}

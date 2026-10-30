@@ -35,7 +35,11 @@ from vcm_workflow import (
     verify_release,
 )
 
+from .auth import AuthConfigError, bearer, identify, load_tokens  # noqa: E402
+
 STATIC = Path(__file__).parent / "static"
+# Served without a token: the page and its assets carry no repository data. /api/* is gated.
+OPEN_PATHS = ("/api/health",)
 
 
 class ReleaseIn(BaseModel):
@@ -66,10 +70,40 @@ class ApprovalIn(BaseModel):
     by: str
 
 
-def create_app(repo_path: str | None = None) -> FastAPI:
-    """One app serves one repository (``repo_path`` or $VCM_REPO or the current directory)."""
+def create_app(
+    repo_path: str | None = None,
+    *,
+    tokens: dict[str, str] | None = None,
+    insecure: bool = False,
+) -> FastAPI:
+    """One app serves one repository (``repo_path`` or $VCM_REPO or the current directory).
+
+    ``tokens`` maps identity to bearer token (default: read from the environment, see
+    ``vcm_api.auth``). With no tokens the app refuses to build unless ``insecure`` is True.
+    """
     path = repo_path or os.environ.get("VCM_REPO") or "."
+    tokens = load_tokens() if tokens is None else tokens
+    if not tokens and not insecure:
+        raise AuthConfigError(
+            "refusing to start without authentication: set VCM_API_TOKEN (or VCM_API_TOKENS) "
+            "or pass insecure=True / --insecure for trusted local use"
+        )
     app = FastAPI(title="VCM Hardware API", version="0.1.0")
+
+    @app.middleware("http")
+    async def _authenticate(request: Request, call_next):
+        request.state.identity = None
+        if tokens and request.url.path.startswith("/api/") and request.url.path not in OPEN_PATHS:
+            who = identify(tokens, bearer(request.headers.get("authorization")))
+            if who is None:
+                return JSONResponse({"detail": "missing or invalid bearer token"}, status_code=401,
+                                    headers={"WWW-Authenticate": "Bearer"})
+            request.state.identity = who
+        return await call_next(request)
+
+    def actor(request: Request, claimed: str) -> str:
+        """The authenticated identity when there is one, else the self-asserted name."""
+        return request.state.identity or claimed
 
     def repo() -> Repository:
         return Repository.discover(path)
@@ -194,20 +228,20 @@ def create_app(repo_path: str | None = None) -> FastAPI:
         return list_prs(repo())
 
     @app.post("/api/prs", status_code=201)
-    def pr_open(body: PrIn):
-        return open_pr(repo(), body.base, body.head, body.title, body.author)
+    def pr_open(body: PrIn, request: Request):
+        return open_pr(repo(), body.base, body.head, body.title, actor(request, body.author))
 
     @app.get("/api/prs/{pr_id}")
     def pr_get(pr_id: int):
         return get_pr(repo(), pr_id)
 
     @app.post("/api/prs/{pr_id}/comments")
-    def pr_comment(pr_id: int, body: CommentIn):
-        return add_comment(repo(), pr_id, body.author, body.text)
+    def pr_comment(pr_id: int, body: CommentIn, request: Request):
+        return add_comment(repo(), pr_id, actor(request, body.author), body.text)
 
     @app.post("/api/prs/{pr_id}/approvals")
-    def pr_approve(pr_id: int, body: ApprovalIn):
-        return approve(repo(), pr_id, body.by)
+    def pr_approve(pr_id: int, body: ApprovalIn, request: Request):
+        return approve(repo(), pr_id, actor(request, body.by))
 
     @app.get("/")
     def dashboard():
@@ -218,6 +252,3 @@ def create_app(repo_path: str | None = None) -> FastAPI:
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
     return app
-
-
-app = create_app()

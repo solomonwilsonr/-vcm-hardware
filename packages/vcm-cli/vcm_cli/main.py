@@ -349,6 +349,30 @@ def cmd_catalog(args) -> int:
     return 0
 
 
+LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+
+
+def cmd_serve(args) -> int:
+    """Run the REST API and dashboard. Fails closed: a token is required unless --insecure."""
+    try:
+        import uvicorn
+
+        from vcm_api import create_app
+        from vcm_api.auth import AuthConfigError
+    except ImportError:
+        raise VcmError("serving needs the API extras: pip install 'vcm[api]'") from None
+    if args.insecure and args.host not in LOOPBACK:
+        raise VcmError("--insecure is only allowed on a loopback host (127.0.0.1)")
+    try:
+        app = create_app(args.repo or ".", insecure=args.insecure)
+    except AuthConfigError as e:
+        raise VcmError(str(e)) from None
+    if args.insecure:
+        print("vcm: WARNING: authentication disabled (--insecure); loopback only", file=sys.stderr)
+    uvicorn.run(app, host=args.host, port=args.port)
+    return 0
+
+
 def cmd_graph(args) -> int:
     if args.graph_cmd == "provision":
         done = appwrite_provision()
@@ -529,6 +553,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("file")
     s.add_argument("--scope", choices=["user", "project"], default="project",
                    help="user: ~/.vcm/catalog; project: ./vcm-catalog (committed with the design)")
+    s = sub.add_parser("serve", help="run the REST API and dashboard (bearer token required)")
+    s.add_argument("--host", default="127.0.0.1", help="bind address (default: loopback only)")
+    s.add_argument("--port", type=int, default=8000)
+    s.add_argument("--insecure", action="store_true",
+                   help="no authentication; refused on non-loopback hosts")
+    s.set_defaults(fn=cmd_serve)
     g = sub.add_parser("graph", help="engineering dependency graph").add_subparsers(dest="graph_cmd", required=True)
     backend_help = "graph store: 'sqlite' (local, default) or 'appwrite' (shared TablesDB)"
     s = g.add_parser("query", help="what is affected by changing a component")

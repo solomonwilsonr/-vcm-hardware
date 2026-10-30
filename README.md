@@ -53,7 +53,7 @@ Findings: verified 6, rule_based 8, speculative 3 | severity: critical 2, warnin
 | 9 | Physical traceability: unit registry, passports, QR | `services/traceability` | **Implemented** with a local JSON registry and a pure-Python QR encoder |
 | 10 | Change review records | `packages/workflow` | **Partial**: local review record (diff, impact, validation, comments, approvals). No merge action, identity or permissions |
 | 11 | Time machine (`timeline`, `explain`) | `packages/workflow` | **Implemented** |
-| 12 | CLI, REST API, dashboard | `packages/vcm-cli`, `services/api` | **Implemented** (no authentication; intended for local/trusted use) |
+| 12 | CLI, REST API, dashboard | `packages/vcm-cli`, `services/api` | **Implemented** (bearer-token auth, fail-closed; loopback bind by default; no roles or TLS) |
 | 13 | Integrations and apps: BMC/Redfish import, `nvidia-smi` ingest, web app, desktop app | `integrations/`, `apps/` | **Planned**: README stubs only |
 
 ## Quickstart
@@ -195,7 +195,11 @@ human has actually checked it.
   the shared graph backend. Revision history is first-parent only.
 - Release verification detects accidental or naive tampering by re-hashing; there are no
   signatures, so someone who can rewrite both manifest and store can forge a release.
-- The REST API has no authentication and is meant for localhost or trusted networks.
+- The REST API uses static bearer tokens from the environment (`VCM_API_TOKEN` or per-person
+  `VCM_API_TOKENS=alice=…,bob=…`). Tokens bind PR author/comment/approval identity, but there are no
+  roles or permissions, no token rotation or expiry, and no TLS: run it on loopback or behind a
+  TLS-terminating proxy. Start it with `vcm serve` (loopback by default; `--insecure` for
+  unauthenticated local use, refused on non-loopback hosts).
 - Integrations, the web app and the desktop app are not implemented.
 
 ## Repository map

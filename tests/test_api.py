@@ -9,7 +9,7 @@ from vcm_api import create_app  # noqa: E402
 
 @pytest.fixture
 def client(sample_repo):
-    return TestClient(create_app(str(sample_repo.root)))
+    return TestClient(create_app(str(sample_repo.root), insecure=True))
 
 
 def test_health_repo_revisions(client):
@@ -159,3 +159,58 @@ def test_dashboard_surfaces_catalog_coverage(client):
 
 def test_static_mount_rejects_traversal(client):
     assert client.get("/static/../app.py").status_code in (301, 307, 400, 404)
+
+
+# ---- authentication -------------------------------------------------------------------
+
+
+def test_refuses_to_start_without_a_token_unless_insecure(sample_repo, monkeypatch):
+    from vcm_api.auth import AuthConfigError
+
+    monkeypatch.delenv("VCM_API_TOKEN", raising=False)
+    monkeypatch.delenv("VCM_API_TOKENS", raising=False)
+    with pytest.raises(AuthConfigError):
+        create_app(str(sample_repo.root))
+    assert create_app(str(sample_repo.root), insecure=True)
+
+
+def test_api_requires_a_valid_bearer_token(sample_repo):
+    c = TestClient(create_app(str(sample_repo.root), tokens={"alice": "s3cret"}))
+    assert c.get("/api/health").status_code == 200  # liveness only, no data
+    assert c.get("/").status_code == 200  # static shell carries no repository data
+    for headers in ({}, {"Authorization": "Bearer nope"}, {"Authorization": "Basic s3cret"}):
+        r = c.get("/api/repo", headers=headers)
+        assert r.status_code == 401 and r.headers["www-authenticate"] == "Bearer"
+    assert c.get("/api/repo", headers={"Authorization": "Bearer s3cret"}).status_code == 200
+
+
+def test_pr_author_is_bound_to_the_token_not_the_body(sample_repo):
+    tokens = {"alice": "ta", "bob": "tb"}
+    c = TestClient(create_app(str(sample_repo.root), tokens=tokens))
+    alice, bob = {"Authorization": "Bearer ta"}, {"Authorization": "Bearer tb"}
+    pr = c.post("/api/prs", headers=alice,
+                json={"base": "v1.0", "head": "v1.1", "title": "t", "author": "mallory"}).json()
+    assert pr["author"] == "alice"
+    c.post(f"/api/prs/{pr['id']}/comments", headers=bob, json={"author": "alice", "text": "hi"})
+    c.post(f"/api/prs/{pr['id']}/approvals", headers=bob, json={"by": "alice"})
+    got = c.get(f"/api/prs/{pr['id']}", headers=alice).json()
+    assert got["comments"][0]["author"] == "bob"
+    assert "bob" in str(got["approvals"]) and "mallory" not in str(got)
+
+
+def test_load_tokens_parses_environment():
+    from vcm_api.auth import AuthConfigError, load_tokens
+
+    assert load_tokens({"VCM_API_TOKEN": "x"}) == {"api": "x"}
+    assert load_tokens({"VCM_API_TOKENS": "a=1, b=2"}) == {"a": "1", "b": "2"}
+    with pytest.raises(AuthConfigError):
+        load_tokens({"VCM_API_TOKENS": "oops"})
+
+
+def test_serve_command_refuses_unsafe_configurations(sample_repo, monkeypatch):
+    from vcm_cli.main import main
+
+    monkeypatch.delenv("VCM_API_TOKEN", raising=False)
+    monkeypatch.delenv("VCM_API_TOKENS", raising=False)
+    assert main(["--repo", str(sample_repo.root), "serve"]) == 1
+    assert main(["--repo", str(sample_repo.root), "serve", "--insecure", "--host", "0.0.0.0"]) == 1

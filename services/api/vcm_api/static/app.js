@@ -45,8 +45,15 @@
 
   /* ------------------------------------------------------------------ api */
 
-  async function api(path, opts) {
+  /* Bearer token for a token-protected server: kept for this tab only, never in a URL. */
+  const tokenStore = {
+    get() { try { return sessionStorage.getItem("vcm-token") || ""; } catch (_) { return ""; } },
+    set(v) { try { sessionStorage.setItem("vcm-token", v); } catch (_) { /* private mode */ } },
+  };
+
+  async function api(path, opts, retried) {
     const init = Object.assign({ headers: { accept: "application/json" } }, opts);
+    if (tokenStore.get()) init.headers = Object.assign({}, init.headers, { authorization: "Bearer " + tokenStore.get() });
     if (init.json !== undefined) {
       init.method = init.method || "POST";
       init.headers = Object.assign({}, init.headers, { "content-type": "application/json" });
@@ -54,6 +61,10 @@
       delete init.json;
     }
     const r = await fetch(path, init);
+    if (r.status === 401 && !retried) {
+      const t = window.prompt("This VCM server requires an API token:");
+      if (t) { tokenStore.set(t.trim()); return api(path, opts, true); }
+    }
     const ct = r.headers.get("content-type") || "";
     const payload = ct.includes("json") ? await r.json().catch(() => null) : await r.text();
     if (!r.ok) {

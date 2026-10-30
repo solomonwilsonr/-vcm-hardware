@@ -131,8 +131,10 @@ rather than claiming none ran.
   `reviewed: true` unless a human actually checked it against the datasheet.
 - **The sample KiCad files are hand-written and have never been opened in KiCad.** The parser is
   proven against assumed output, not real output.
-- **The REST API has no authentication of any kind.** `author` fields are free-text strings
-  (`services/api/vcm_api/app.py`), so PR authorship and approvals are self-asserted.
+- **The REST API uses static bearer tokens and nothing more** (`services/api/vcm_api/auth.py`). It
+  fails closed without `VCM_API_TOKEN`/`VCM_API_TOKENS` unless `--insecure`; with a token, PR author,
+  comment author and approver come from the token's identity, not the body. With `--insecure` those
+  fields are still self-asserted. No roles, expiry or TLS. `/api/health` and the static shell are open.
 - Revision history is **first-parent only**. No merge, no remotes, no locking.
 - `kicad-cli` DRC/ERC is wrapped but skipped when absent, and has never run against a real install in CI.
 
@@ -145,12 +147,12 @@ engineering.
 |---|-----|--------|--------|
 | 2 | Component DB has 4 parts | ~1–2 days | **largely done** — 54 parts, layered catalog, CSV import, coverage disclosure. Remaining: per-value attribution, and getting entries actually datasheet-reviewed |
 | 5 | No release signatures | ~1–2 days | open |
-| 6 | No API auth | ~1 day | open |
+| 6 | No API auth | ~1 day | **done** — bearer tokens, fail-closed, `vcm serve` binds loopback, identity bound to token. Remaining: roles, token expiry, TLS |
 | 3 | Hand-made KiCad fixtures | ~2–3 days | open |
 | 1 | Schematic nets not traced | ~1–2 weeks | open |
 | 4 | Single-user, no remotes | ~2–3 weeks | **partly addressed** — the graph now has a shared Appwrite TablesDB backend (`vcm_graph.backends`). Devices and releases are still local JSON. Merge is still deliberately not planned |
 
-**Recommended order: 6, then 5, then 3 — 3 de-risks 1 by supplying real files.**
+**Recommended order: ~~6~~, then 5, then 3 — 3 de-risks 1 by supplying real files.**
 
 ### 2. Component catalog — mostly built
 

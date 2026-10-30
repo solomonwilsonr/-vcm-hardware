@@ -9,7 +9,7 @@ from vcm_api import create_app  # noqa: E402
 
 @pytest.fixture
 def client(sample_repo):
-    return TestClient(create_app(str(sample_repo.root)))
+    return TestClient(create_app(str(sample_repo.root), insecure=True))
 
 
 def test_health_repo_revisions(client):

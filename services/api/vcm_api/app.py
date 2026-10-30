@@ -1,6 +1,13 @@
-"""FastAPI application exposing VCM features over REST, plus a static dashboard."""
+"""FastAPI application exposing VCM features over REST, plus a static dashboard.
+
+Authentication fails closed: the app refuses to start unless at least one API token exists
+(``vcm token create`` or ``$VCM_API_TOKEN``), or ``insecure=True`` / ``$VCM_API_INSECURE=1`` is set
+explicitly. With tokens, every author and approver is the identity behind the token, not a name
+typed into a request body.
+"""
 from __future__ import annotations
 
+import hmac
 import os
 from pathlib import Path
 
@@ -11,6 +18,7 @@ from pydantic import BaseModel
 
 from vcm_ai import analyze, to_markdown
 from vcm_core import Repository, VcmError
+from vcm_core.tokens import TokenStore, role_at_least
 from vcm_diff import diff_revisions, render_text
 from vcm_graph import build_graph
 from vcm_trace import (
@@ -63,16 +71,74 @@ class CommentIn(BaseModel):
 
 
 class ApprovalIn(BaseModel):
-    by: str
+    by: str = ""
 
 
-def create_app(repo_path: str | None = None) -> FastAPI:
+#: paths anyone may fetch: liveness, and the dashboard shell (which holds no repository data)
+_OPEN = ("/api/health",)
+
+
+def required_role(method: str, path: str) -> str | None:
+    """Role a request needs, or None when the path is public."""
+    if path in _OPEN or not path.startswith("/api/"):
+        return None
+    if method in ("GET", "HEAD", "OPTIONS"):
+        return "viewer"
+    if path.startswith("/api/prs/") and path.endswith("/approvals"):
+        return "approver"
+    return "editor"
+
+
+class AuthConfigError(RuntimeError):
+    """Raised at startup when no authentication is configured and insecure mode was not asked for."""
+
+
+def create_app(repo_path: str | None = None, insecure: bool | None = None) -> FastAPI:
     """One app serves one repository (``repo_path`` or $VCM_REPO or the current directory)."""
     path = repo_path or os.environ.get("VCM_REPO") or "."
+    if insecure is None:
+        insecure = os.environ.get("VCM_API_INSECURE", "") == "1"
+    env_token = os.environ.get("VCM_API_TOKEN", "")
+    env_user = os.environ.get("VCM_API_USER", "api-admin")
+    store = TokenStore(Repository.discover(path).dir)
+    if not insecure and not env_token and not store.configured():
+        raise AuthConfigError(
+            "refusing to start without authentication: create a token with "
+            "`vcm token create USER --role ROLE`, set VCM_API_TOKEN, or pass --insecure "
+            "explicitly for a trusted local network")
     app = FastAPI(title="VCM Hardware API", version="0.1.0")
+    app.state.insecure = insecure
 
     def repo() -> Repository:
         return Repository.discover(path)
+
+    def identify(token: str) -> dict | None:
+        if env_token and hmac.compare_digest(token, env_token):
+            return {"user": env_user, "role": "admin", "id": "env"}
+        return store.identify(token) if token else None
+
+    @app.middleware("http")
+    async def _auth(request: Request, call_next):
+        request.state.identity = None
+        needed = required_role(request.method, request.url.path)
+        if needed is None or insecure:
+            return await call_next(request)
+        header = request.headers.get("authorization", "")
+        token = header[7:].strip() if header.lower().startswith("bearer ") else ""
+        who = identify(token)
+        if who is None:
+            return JSONResponse({"detail": "authentication required"}, status_code=401,
+                                headers={"WWW-Authenticate": "Bearer"})
+        if not role_at_least(who["role"], needed):
+            return JSONResponse({"detail": f"{who['user']} is {who['role']}; this needs {needed}"},
+                                status_code=403)
+        request.state.identity = who
+        return await call_next(request)
+
+    def actor(request: Request, claimed: str) -> str:
+        """The authenticated user; a self-asserted name only in insecure mode."""
+        who = request.state.identity
+        return who["user"] if who else (claimed or "unknown")
 
     @app.exception_handler(VcmError)
     async def _vcm_error(_: Request, exc: VcmError):
@@ -86,6 +152,12 @@ def create_app(repo_path: str | None = None) -> FastAPI:
     @app.get("/api/health")
     def health():
         return {"status": "ok"}
+
+    @app.get("/api/whoami")
+    def whoami(request: Request):
+        who = request.state.identity
+        return {"authenticated": who is not None, "insecure": insecure,
+                "user": who["user"] if who else None, "role": who["role"] if who else None}
 
     @app.get("/api/repo")
     def repo_info():
@@ -194,20 +266,25 @@ def create_app(repo_path: str | None = None) -> FastAPI:
         return list_prs(repo())
 
     @app.post("/api/prs", status_code=201)
-    def pr_open(body: PrIn):
-        return open_pr(repo(), body.base, body.head, body.title, body.author)
+    def pr_open(body: PrIn, request: Request):
+        return open_pr(repo(), body.base, body.head, body.title, actor(request, body.author))
 
     @app.get("/api/prs/{pr_id}")
     def pr_get(pr_id: int):
         return get_pr(repo(), pr_id)
 
     @app.post("/api/prs/{pr_id}/comments")
-    def pr_comment(pr_id: int, body: CommentIn):
-        return add_comment(repo(), pr_id, body.author, body.text)
+    def pr_comment(pr_id: int, body: CommentIn, request: Request):
+        return add_comment(repo(), pr_id, actor(request, body.author), body.text)
 
     @app.post("/api/prs/{pr_id}/approvals")
-    def pr_approve(pr_id: int, body: ApprovalIn):
-        return approve(repo(), pr_id, body.by)
+    def pr_approve(pr_id: int, body: ApprovalIn, request: Request):
+        by = actor(request, body.by)
+        if not by or by == "unknown":
+            raise HTTPException(422, "approver name required")
+        if request.state.identity and get_pr(repo(), pr_id)["author"] == by:
+            raise HTTPException(403, "authors cannot approve their own change")
+        return approve(repo(), pr_id, by)
 
     @app.get("/")
     def dashboard():
@@ -219,5 +296,3 @@ def create_app(repo_path: str | None = None) -> FastAPI:
 
     return app
 
-
-app = create_app()

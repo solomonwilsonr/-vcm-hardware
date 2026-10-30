@@ -45,7 +45,19 @@
 
   /* ------------------------------------------------------------------ api */
 
-  async function api(path, opts) {
+  /* The API token lives only in this browser. Storage can be unavailable (private windows,
+     blocked site data), so every access is guarded and a missing token just means a prompt. */
+  const TOKEN_KEY = "vcm-api-token";
+  function storedToken() {
+    try { return window.localStorage.getItem(TOKEN_KEY) || ""; } catch (e) { return ""; }
+  }
+  function storeToken(t) {
+    try { if (t) window.localStorage.setItem(TOKEN_KEY, t); else window.localStorage.removeItem(TOKEN_KEY); }
+    catch (e) { /* not persisted; asked again next load */ }
+  }
+  let sessionToken = storedToken();
+
+  async function api(path, opts, retried) {
     const init = Object.assign({ headers: { accept: "application/json" } }, opts);
     if (init.json !== undefined) {
       init.method = init.method || "POST";
@@ -53,7 +65,18 @@
       init.body = JSON.stringify(init.json);
       delete init.json;
     }
+    if (sessionToken) {
+      init.headers = Object.assign({}, init.headers, { authorization: "Bearer " + sessionToken });
+    }
     const r = await fetch(path, init);
+    if (r.status === 401 && !retried) {
+      const t = window.prompt("This VCM server requires an API token (create one with `vcm token create`):");
+      if (t) {
+        sessionToken = t.trim();
+        storeToken(sessionToken);
+        return api(path, opts, true);
+      }
+    }
     const ct = r.headers.get("content-type") || "";
     const payload = ct.includes("json") ? await r.json().catch(() => null) : await r.text();
     if (!r.ok) {
@@ -981,7 +1004,8 @@
       h("div", { class: "view-head" },
         h("h1", {}, "Hardware pull requests"),
         h("p", {}, "A local review record attached to a revision pair. There is no merge " +
-          "action, no identity and no permissions — authors and approvals are " +
+          "action. With API tokens, authors and approvers are the token's user and " +
+          "self-approval is refused; on a server started with --insecure they are " +
           "self-asserted free text.")),
       out);
     S.ui.prOut = out;

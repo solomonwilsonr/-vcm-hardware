@@ -15,6 +15,7 @@ from vcm_ai.catalog import (
 )
 from vcm_core import NothingToCommit, Repository, VcmError, now_iso
 from vcm_core import signing as sg
+from vcm_core.tokens import ROLES, TokenStore
 from vcm_diff import diff_revisions, render_text
 from vcm_graph import build_graph, project_config
 from vcm_graph.backends.appwrite_backend import health as appwrite_health
@@ -267,6 +268,43 @@ def cmd_key(args) -> int:
             print(f"{kid}  {e['name']:16} {','.join(e['roles']):18} added {e['added_at']}")
         if not keys:
             print("no trusted keys")
+    return 0
+
+
+def cmd_token(args) -> int:
+    repo = _repo(args)
+    store = TokenStore(repo.dir)
+    if args.token_cmd == "create":
+        token = store.create(args.user, args.role, now_iso())
+        repo.audit.append("token.create", args.user, {"role": args.role})
+        print(f"token for {args.user} ({args.role}); shown once, store it now:\n{token}")
+    elif args.token_cmd == "revoke":
+        n = store.revoke(args.token_id)
+        repo.audit.append("token.revoke", args.token_id)
+        print(f"revoked {n} token(s)")
+    else:
+        for t in store.list():
+            print(f"{t['id']}  {t['user']:16} {t['role']:9} created {t['created_at']}")
+    return 0
+
+
+def cmd_serve(args) -> int:
+    try:
+        import uvicorn
+
+        from vcm_api import create_app
+    except ImportError:
+        print("vcm serve needs the API extras: pip install 'vcm-hardware[api]'", file=sys.stderr)
+        return 2
+    from vcm_api.app import AuthConfigError
+    try:
+        app = create_app(str(_repo(args).root), insecure=args.insecure)
+    except AuthConfigError as e:
+        print(f"vcm: error: {e}", file=sys.stderr)
+        return 1
+    if args.insecure:
+        print("WARNING: serving WITHOUT authentication (--insecure)", file=sys.stderr)
+    uvicorn.run(app, host=args.host, port=args.port)
     return 0
 
 
@@ -607,6 +645,23 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_key)
     s.add_argument("key_id")
     k.add_parser("list", help="trusted keys").set_defaults(fn=cmd_key)
+
+    t = sub.add_parser("token", help="API tokens bound to a user and a role")
+    t = t.add_subparsers(dest="token_cmd", required=True)
+    s = t.add_parser("create")
+    s.set_defaults(fn=cmd_token)
+    s.add_argument("user")
+    s.add_argument("--role", choices=ROLES, default="viewer")
+    s = t.add_parser("revoke")
+    s.set_defaults(fn=cmd_token)
+    s.add_argument("token_id")
+    t.add_parser("list").set_defaults(fn=cmd_token)
+
+    s = add("serve", cmd_serve, "serve the REST API and dashboard (authenticated by default)")
+    s.add_argument("--host", default="127.0.0.1", help="bind address (default: localhost only)")
+    s.add_argument("--port", type=int, default=8000)
+    s.add_argument("--insecure", action="store_true",
+                   help="serve without authentication; only on a trusted network")
 
     au = sub.add_parser("audit", help="hash-chained audit log")
     au = au.add_subparsers(dest="audit_cmd", required=True)

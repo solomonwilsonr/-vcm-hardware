@@ -1,12 +1,43 @@
 {
   "project": "sensor_node",
-  "rails": {"+5V": 5.0, "+3V3": 3.3},
+  "rails": {
+    "+5V": 5.0,
+    "+3V3": 3.3
+  },
   "firmware_links": [
-    {"component": "U2", "paths": ["firmware/main.c", "firmware/config.h"],
-     "note": "Firmware configures the Wi-Fi module, brownout threshold and LED GPIO"}
+    {
+      "component": "U2",
+      "paths": [
+        "firmware/main.c",
+        "firmware/config.h"
+      ],
+      "note": "Firmware configures the Wi-Fi module, brownout threshold and LED GPIO"
+    }
   ],
   "tests": [
-    {"name": "power-rail-bringup", "validates": ["U1", "C1", "C2"], "evidence": "tests/power_rail_test.md"},
-    {"name": "wifi-tx-burst", "validates": ["U2", "U1"], "evidence": "tests/wifi_tx_burst.md"}
-  ]
+    {
+      "name": "power-rail-bringup",
+      "validates": [
+        "U1",
+        "C1",
+        "C2"
+      ],
+      "evidence": "tests/power_rail_test.md"
+    },
+    {
+      "name": "wifi-tx-burst",
+      "validates": [
+        "U2",
+        "U1"
+      ],
+      "evidence": "tests/wifi_tx_burst.md"
+    }
+  ],
+  "external_loads": {
+    "J2": {
+      "typ_ma": 10,
+      "peak_ma": 25,
+      "note": "I2C sensor on header"
+    }
+  }
 }

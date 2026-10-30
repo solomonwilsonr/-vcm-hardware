@@ -1,0 +1,23 @@
+{
+  "_note": "Small illustrative component-property subset for heuristic checks. Not a substitute for datasheets; verify every value before relying on it.",
+  "parts": [
+    {"match": ["AMS1117"], "type": "ldo", "vout": 3.3, "iout_max_ma": 1000, "vin_max": 15.0,
+     "dropout_v": 1.3, "min_cout_uf": 22, "output_cap": "requires_esr", "iq_ua": 5000,
+     "rth_ja_c_per_w": 90, "tj_max_c": 125, "package": "SOT-223",
+     "pinout": {"1": "GND", "2": "VOUT", "3": "VIN"},
+     "note": "Classic LDO that expects an output capacitor with minimum ESR (tantalum or ceramic with series resistance)"},
+    {"match": ["MCP1700-3302"], "type": "ldo", "vout": 3.3, "iout_max_ma": 250, "vin_max": 6.0,
+     "dropout_v": 0.178, "min_cout_uf": 1, "output_cap": "ceramic_ok", "iq_ua": 1.6,
+     "rth_ja_c_per_w": 230, "tj_max_c": 125, "package": "SOT-23",
+     "pinout": {"1": "GND", "2": "VOUT", "3": "VIN"},
+     "note": "Low-quiescent-current LDO, 250 mA class"},
+    {"match": ["TLV75733"], "type": "ldo", "vout": 3.3, "iout_max_ma": 1000, "vin_max": 5.5,
+     "dropout_v": 0.28, "min_cout_uf": 1, "output_cap": "ceramic_ok", "iq_ua": 25,
+     "rth_ja_c_per_w": 190, "tj_max_c": 125, "package": "SOT-23-5",
+     "pinout": {"1": "VIN", "2": "GND", "3": "EN", "5": "VOUT"}},
+    {"match": ["ESP32-C3-MINI-1"], "type": "mcu_module", "supply_vmin": 3.0, "supply_vmax": 3.6,
+     "i_typ_ma": 80, "i_peak_ma": 350, "package": "MODULE",
+     "pinout": {"1": "GND", "2": "GND", "3": "VDD", "13": "GND"},
+     "note": "Wi-Fi TX bursts draw the peak current"}
+  ]
+}

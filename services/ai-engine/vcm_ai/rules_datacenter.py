@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import re
 
+from .catalog import field_source
+
 RULE_BASED = "rule_based"
 VERIFIED, SPECULATIVE = "verified", "speculative"
 _REDUNDANCY = re.compile(r"^\s*(\d+)\s*\+\s*(\d+)\s*$")
@@ -42,6 +44,56 @@ def prop(component, part: dict | None, key: str, default=None):
     if part and part.get(key) not in (None, ""):
         return part[key]
     return default
+
+
+def cite(component, part: dict | None, keys) -> dict:
+    """Evidence link naming where each value a rule used came from, field by field.
+
+    A value declared in the manifest is attributed to the manifest; a catalog value carries the
+    catalog's own attribution and whether a named human verified it.
+    """
+    fields = {}
+    for key in keys:
+        raw = (component.props or {}).get(key)
+        if raw not in (None, ""):
+            fields[key] = {"value": raw, "from": "node manifest", "source": "declared",
+                           "verified_by": ""}
+        elif part and part.get(key) not in (None, ""):
+            fields[key] = {"value": part[key], "from": "catalog", **field_source(part, key)}
+    link = {"type": "db", "ref": component.ref, "fields": fields}
+    if part:
+        link.update({"part": part["match"][0], "reviewed": bool(part.get("reviewed")),
+                     "source": part.get("source", ""), "origin": part.get("_origin", "")})
+    else:
+        link["part"] = component.value or component.ref
+        link["reviewed"] = False
+    return link
+
+
+def _kind(component, part: dict | None) -> str:
+    return (component.lib_id or (part or {}).get("type") or "").lower()
+
+
+def _memory_type(component, part: dict | None) -> str:
+    """DDR generation from an explicit field, else from the form factor (``DDR4 RDIMM``)."""
+    explicit = prop(component, part, "memory_type")
+    if explicit:
+        return str(explicit).upper()
+    for text in ((component.props or {}).get("form_factor", ""), component.footprint,
+                 (part or {}).get("form_factor", "")):
+        m = re.search(r"DDR\d", str(text or ""), re.I)
+        if m:
+            return m.group(0).upper()
+    return ""
+
+
+def _form_factor(component) -> str:
+    """The declared form factor: node manifests fold ``slot / form_factor`` into the footprint."""
+    return component.footprint.split(" / ")[-1] if " / " in component.footprint else ""
+
+
+def _touched(changed: set[str], refs) -> bool:
+    return bool(changed & set(refs))
 
 
 def usable_watts(domain_cfg: dict, psu_watts: list[float]) -> tuple[float, str]:
@@ -186,7 +238,10 @@ def pcie_rules(b, d, meta: dict) -> list[str]:
             f"{', '.join(host_refs)}. Links train at the lower generation, roughly halving host "
             "bandwidth per generation step. On-device compute is unaffected; host transfers and "
             "peer-to-peer staging are not.",
-            b.ref_ev(refs[0]) + [{"type": "ref", "ref": r} for r in host_refs], refs + host_refs))
+            b.ref_ev(refs[0]) + [cite(b.db.components[refs[0]],
+                                      b.catalog.lookup(b.db.components[refs[0]]), ["pcie_gen"])]
+            + [cite(b.db.components[r], b.catalog.lookup(b.db.components[r]), ["pcie_gen"])
+               for r in host_refs], refs + host_refs))
 
     for root, requested in sorted(per_root.items()):
         host_ref, host_part = hosts[root]
@@ -235,7 +290,8 @@ def driver_rules(b, d, meta: dict) -> list[str]:
                 f"Node declares driver {installed}; {worst[0]} ({b.db.components[worst[0]].value}) "
                 f"requires at least {worst[1]}. Affected: {', '.join(refs)}. These devices will "
                 "not initialise until the driver is upgraded.",
-                ev + [{"type": "ref", "ref": r} for r in refs[:4]], refs))
+                ev + [cite(b.db.components[worst[0]], b.catalog.lookup(b.db.components[worst[0]]),
+                           ["min_driver"])] + [{"type": "ref", "ref": r} for r in refs[:4]], refs))
             b.retest("driver-upgrade-and-enumeration", RULE_BASED,
                      "installed driver below part minimum", ev)
         else:
@@ -270,7 +326,12 @@ def connector_rules(b, d, meta: dict) -> list[str]:
 
     for (old, new), refs in sorted(swaps.items()):
         count = f" on {len(refs)} devices" if len(refs) > 1 else f" ({refs[0]})"
-        ev = b.ref_ev(refs[0])
+        ev = b.ref_ev(refs[0]) + [cite(b.da.components[refs[0]],
+                                       b.catalog.lookup(b.da.components[refs[0]]),
+                                       ["power_connector"]),
+                                  cite(b.db.components[refs[0]],
+                                       b.catalog.lookup(b.db.components[refs[0]]),
+                                       ["power_connector"])]
         ids.append(b.add(
             RULE_BASED, "warning", f"Power connector changed: {old} -> {new}{count}",
             f"Affected: {', '.join(refs)}. The existing cable harness does not fit. Confirm the "
@@ -278,6 +339,191 @@ def connector_rules(b, d, meta: dict) -> list[str]:
             "any adapter is rated for the part's full draw.", ev, refs))
         b.retest("power-harness-fit-check", RULE_BASED,
                  f"connector type changed on {len(refs)} device(s)", ev)
+    return ids
+
+
+def memory_rules(b, d, meta: dict) -> list[str]:
+    """DIMM generation against the CPU, mixed modules, and channel population per CPU."""
+    ids: list[str] = []
+    changed = set(d["changed_refs"])
+    comps = b.db.components
+    for cpu_ref, cpu in sorted(comps.items()):
+        cpu_part = b.catalog.lookup(cpu)
+        if _kind(cpu, cpu_part) != "cpu":
+            continue
+        mem = cpu.pads.get("memory")
+        if not mem:
+            continue
+        dimms = sorted(r for r, c in comps.items()
+                       if r != cpu_ref and c.pads.get("memory") == mem)
+        before = [r for r, c in b.da.components.items() if c.pads.get("memory") == mem]
+        if not dimms or not _touched(changed, dimms + before + [cpu_ref]):
+            continue
+        cpu_type = _memory_type(cpu, cpu_part)
+        parts = {r: b.catalog.lookup(comps[r]) for r in dimms}
+        wrong = [r for r in dimms
+                 if cpu_type and (t := _memory_type(comps[r], parts[r])) and t != cpu_type]
+        if wrong:
+            gens = sorted({_memory_type(comps[r], parts[r]) for r in wrong})
+            ids.append(b.add(
+                RULE_BASED, "critical", f"{mem}: {'/'.join(gens)} modules on a {cpu_type} CPU",
+                f"{cpu_ref} ({cpu.value}) takes {cpu_type}; {', '.join(wrong)} are "
+                f"{'/'.join(gens)}. DDR generations are keyed differently: these modules will not "
+                "seat, let alone train.",
+                [cite(cpu, cpu_part, ["memory_type"]), cite(comps[wrong[0]], parts[wrong[0]],
+                                                            ["memory_type", "form_factor"])],
+                [cpu_ref] + wrong))
+        models = sorted({comps[r].value for r in dimms})
+        if len(models) > 1:
+            ids.append(b.add(
+                RULE_BASED, "warning", f"{mem}: mixed memory modules ({len(models)} kinds)",
+                f"{', '.join(models)} share {cpu_ref}'s memory controller. Mixed capacities or "
+                "speeds generally run at the slowest common setting, and some platforms refuse "
+                "mixed ranks within a channel.",
+                [cite(comps[r], parts[r], ["capacity_gb"]) for r in dimms[:2]], dimms))
+        channels = prop(cpu, cpu_part, "memory_channels")
+        if channels and len(dimms) % int(channels):
+            ids.append(b.add(
+                RULE_BASED, "warning", f"{mem}: {len(dimms)} modules across {int(channels)} channels",
+                f"{cpu_ref} has {int(channels)} memory channels; {len(dimms)} modules leave the "
+                "channels unevenly populated, which lowers memory bandwidth and can disable "
+                "interleaving. Populate in multiples of the channel count.",
+                [cite(cpu, cpu_part, ["memory_channels"])], [cpu_ref] + dimms))
+    return ids
+
+
+def cpu_rules(b, d, meta: dict) -> list[str]:
+    """Socket fit, and identical processors across the sockets of one node."""
+    ids: list[str] = []
+    changed = set(d["changed_refs"])
+    cpus = [(r, c, b.catalog.lookup(c)) for r, c in sorted(b.db.components.items())]
+    cpus = [(r, c, p) for r, c, p in cpus if _kind(c, p) == "cpu"]
+    if not cpus or not _touched(changed, [r for r, _, _ in cpus]):
+        return ids
+    board_socket = str((meta.get("chassis") or {}).get("socket", "") or "")
+    for ref, c, part in cpus:
+        wants = str((part or {}).get("socket") or "")
+        has = board_socket or _form_factor(c)
+        if ref in changed and wants and has and wants.upper() != has.upper():
+            ids.append(b.add(
+                RULE_BASED, "critical", f"{ref} ({c.value}) needs socket {wants}, board has {has}",
+                "The processor does not fit this board. A socket change is a motherboard (and "
+                "usually chassis) change, not a part swap.",
+                [cite(c, part, ["socket"]), {"type": "declared", "source": "node manifest",
+                                             "socket": has}], [ref]))
+    models = sorted({c.value for _, c, _ in cpus})
+    if len(models) > 1:
+        ids.append(b.add(
+            RULE_BASED, "critical", f"Mixed processors across sockets: {', '.join(models)}",
+            "Multi-socket platforms require identical processors (same model and stepping) in "
+            "every socket.", [cite(c, p, ["socket", "tdp_w"]) for _, c, p in cpus[:2]],
+            [r for r, _, _ in cpus]))
+    return ids
+
+
+def interconnect_rules(b, d, meta: dict) -> list[str]:
+    """Devices bridged on one interconnect fabric (NVLink, Infinity Fabric) must match."""
+    ids: list[str] = []
+    changed = set(d["changed_refs"])
+    fabrics: dict[str, list[str]] = {}
+    for ref, c in b.db.components.items():
+        net = c.pads.get("interconnect")
+        if net:
+            fabrics.setdefault(net, []).append(ref)
+    for net, refs in sorted(fabrics.items()):
+        refs = sorted(refs)
+        models = sorted({b.db.components[r].value for r in refs})
+        if len(models) > 1 and _touched(changed, refs):
+            ids.append(b.add(
+                RULE_BASED, "critical", f"{net} bridges different accelerators: {', '.join(models)}",
+                f"{', '.join(refs)} share {net}. Bridges and fabrics pair identical devices; a "
+                "mixed set either fails to link or falls back to host PCIe for peer traffic.",
+                [cite(b.db.components[refs[0]], b.catalog.lookup(b.db.components[refs[0]]),
+                      ["form_factor"])], refs))
+    return ids
+
+
+def network_rules(b, d, meta: dict) -> list[str]:
+    """NIC port speed against the speed declared for the fabric it attaches to."""
+    ids: list[str] = []
+    changed = set(d["changed_refs"])
+    declared = meta.get("fabrics") or {}
+    mismatched: dict[tuple, list[str]] = {}
+    for ref in sorted(changed):
+        c = b.db.components.get(ref)
+        if c is None:
+            continue
+        part = b.catalog.lookup(c)
+        if _kind(c, part) != "nic":
+            continue
+        speed = prop(c, part, "speed_gbps")
+        fabric = c.pads.get("fabric", "")
+        want = (declared.get(fabric) or {}).get("speed_gbps")
+        if speed and want and float(speed) != float(want):
+            mismatched.setdefault((fabric, float(speed), float(want)), []).append(ref)
+    for (fabric, speed, want), refs in sorted(mismatched.items()):
+        slower = speed < want
+        ids.append(b.add(
+            RULE_BASED, "warning" if slower else "info",
+            f"{', '.join(refs)}: {speed:g} Gb/s port on a {want:g} Gb/s fabric ({fabric})",
+            ("The NIC is slower than the fabric; this node becomes a bottleneck for collective "
+             "traffic." if slower else
+             "The NIC is faster than the fabric and will link at the fabric's speed; the extra "
+             "capability is unused until the switch side changes. Check optics and cables "
+             "match both ends."),
+            [cite(b.db.components[refs[0]], b.catalog.lookup(b.db.components[refs[0]]),
+                  ["speed_gbps"]), {"type": "declared", "source": "node manifest",
+                                    "fabric": fabric, "speed_gbps": want}], refs))
+    return ids
+
+
+#: software-stack minimums a part may declare, and the firmware key in the manifest each is checked
+#: against. ``min_driver`` has its own rule (with its own wording) above.
+_STACK_MINIMUMS = (("min_cuda", "cuda", "CUDA runtime"), ("min_bios", "bios", "BIOS"),
+                   ("min_bmc", "bmc", "BMC firmware"))
+
+
+def stack_minimum_rules(b, d, meta: dict) -> list[str]:
+    ids: list[str] = []
+    firmware = meta.get("firmware") or {}
+    for field, key, label in _STACK_MINIMUMS:
+        have = _version(firmware.get(key, ""))
+        if have is None:
+            continue
+        short: dict[str, list[str]] = {}
+        for ref in sorted(d["changed_refs"]):
+            c = b.db.components.get(ref)
+            if c is None:
+                continue
+            part = b.catalog.lookup(c)
+            want = prop(c, part, field)
+            parsed = _version(str(want)) if want else None
+            if parsed and parsed > have:
+                short.setdefault(str(want), []).append(ref)
+        for want, refs in sorted(short.items()):
+            c = b.db.components[refs[0]]
+            ids.append(b.add(
+                RULE_BASED, "critical" if key == "cuda" else "warning",
+                f"{label} {firmware[key]} is below the minimum for {c.value} ({want})",
+                f"Affected: {', '.join(refs)}. Upgrade {label} to at least {want} before the "
+                "change, and re-validate the workload images against it.",
+                [cite(c, b.catalog.lookup(c), [field]),
+                 {"type": "declared", "source": "node manifest", key: firmware[key]}], refs))
+    return ids
+
+
+def slot_rules(b, d, meta: dict) -> list[str]:
+    """More accelerators than the chassis has slots for."""
+    ids: list[str] = []
+    limit = (meta.get("chassis") or {}).get("max_gpu_slots")
+    gpus = sorted(r for r, c in b.db.components.items()
+                  if _kind(c, b.catalog.lookup(c)) == "gpu")
+    if limit and len(gpus) > int(limit) and _touched(set(d["changed_refs"]), gpus):
+        ids.append(b.add(
+            RULE_BASED, "critical", f"{len(gpus)} accelerators in a chassis with {int(limit)} slots",
+            f"{(meta.get('chassis') or {}).get('model', 'The chassis')} declares {int(limit)} "
+            "accelerator slots.", [{"type": "declared", "source": "node manifest",
+                                    "max_gpu_slots": limit}], gpus))
     return ids
 
 
@@ -352,5 +598,11 @@ def datacenter_rules(b, d) -> list[str]:
     ids += pcie_rules(b, d, meta)
     ids += driver_rules(b, d, meta)
     ids += connector_rules(b, d, meta)
+    ids += memory_rules(b, d, meta)
+    ids += cpu_rules(b, d, meta)
+    ids += interconnect_rules(b, d, meta)
+    ids += network_rules(b, d, meta)
+    ids += stack_minimum_rules(b, d, meta)
+    ids += slot_rules(b, d, meta)
     ids += observed_rules(b, d, meta)
     return ids

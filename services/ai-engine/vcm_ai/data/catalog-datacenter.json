@@ -320,7 +320,10 @@
    "pcie_lanes": 64,
    "socket": "LGA4189",
    "source": "Intel Xeon Gold 6338 spec",
-   "reviewed": false
+   "reviewed": false,
+   "memory_type": "DDR4",
+   "memory_channels": 8,
+   "max_memory_mts": 3200
   },
   {
    "match": [
@@ -332,7 +335,10 @@
    "pcie_lanes": 64,
    "socket": "LGA4189",
    "source": "Intel Xeon Gold 6348 spec",
-   "reviewed": false
+   "reviewed": false,
+   "memory_type": "DDR4",
+   "memory_channels": 8,
+   "max_memory_mts": 3200
   },
   {
    "match": [
@@ -344,7 +350,10 @@
    "pcie_lanes": 64,
    "socket": "LGA4189",
    "source": "Intel Xeon Platinum 8358 spec",
-   "reviewed": false
+   "reviewed": false,
+   "memory_type": "DDR4",
+   "memory_channels": 8,
+   "max_memory_mts": 3200
   },
   {
    "match": [
@@ -356,7 +365,10 @@
    "pcie_lanes": 80,
    "socket": "LGA4677",
    "source": "Intel Xeon Platinum 8480+ spec",
-   "reviewed": false
+   "reviewed": false,
+   "memory_type": "DDR5",
+   "memory_channels": 8,
+   "max_memory_mts": 4800
   },
   {
    "match": [
@@ -368,7 +380,10 @@
    "pcie_lanes": 128,
    "socket": "SP3",
    "source": "AMD EPYC 7763 spec",
-   "reviewed": false
+   "reviewed": false,
+   "memory_type": "DDR4",
+   "memory_channels": 8,
+   "max_memory_mts": 3200
   },
   {
    "match": [
@@ -380,7 +395,10 @@
    "pcie_lanes": 128,
    "socket": "SP5",
    "source": "AMD EPYC 9654 spec",
-   "reviewed": false
+   "reviewed": false,
+   "memory_type": "DDR5",
+   "memory_channels": 12,
+   "max_memory_mts": 4800
   },
   {
    "match": [
@@ -392,7 +410,10 @@
    "pcie_lanes": 128,
    "socket": "SP3",
    "source": "AMD EPYC 7543 spec",
-   "reviewed": false
+   "reviewed": false,
+   "memory_type": "DDR4",
+   "memory_channels": 8,
+   "max_memory_mts": 3200
   },
   {
    "match": [
@@ -440,7 +461,8 @@
    "pcie_lanes": 16,
    "form_factor": "OCP 3.0",
    "source": "NVIDIA ConnectX-6 Dx datasheet",
-   "reviewed": false
+   "reviewed": false,
+   "speed_gbps": 100
   },
   {
    "match": [
@@ -453,7 +475,8 @@
    "pcie_lanes": 16,
    "form_factor": "OCP 3.0",
    "source": "NVIDIA ConnectX-7 datasheet",
-   "reviewed": false
+   "reviewed": false,
+   "speed_gbps": 400
   },
   {
    "match": [
@@ -478,7 +501,8 @@
    "capacity_gb": 32,
    "form_factor": "DDR4 RDIMM",
    "source": "Samsung DDR4 RDIMM datasheet",
-   "reviewed": false
+   "reviewed": false,
+   "memory_type": "DDR4"
   },
   {
    "match": [
@@ -489,6 +513,61 @@
    "capacity_gb": 64,
    "form_factor": "DDR5 RDIMM",
    "source": "generic DDR5 RDIMM",
+   "reviewed": false,
+   "memory_type": "DDR5"
+  },
+  {
+   "match": [
+    "M321R8GA0BB0-CQK",
+    "64GB DDR5-4800 RDIMM Samsung"
+   ],
+   "type": "dimm",
+   "tdp_w": 10.0,
+   "capacity_gb": 64,
+   "form_factor": "DDR5 RDIMM",
+   "memory_type": "DDR5",
+   "source": "Samsung DDR5 RDIMM product page (typical power estimate)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "M393A8G40AB2-CWE",
+    "64GB DDR4-3200 RDIMM"
+   ],
+   "type": "dimm",
+   "tdp_w": 9.0,
+   "capacity_gb": 64,
+   "form_factor": "DDR4 RDIMM",
+   "memory_type": "DDR4",
+   "source": "Samsung DDR4 RDIMM product page (typical power estimate)",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "MCX75310AAS-NEAT",
+    "ConnectX-7 NDR 400G"
+   ],
+   "type": "nic",
+   "tdp_w": 25,
+   "pcie_gen": 5,
+   "pcie_lanes": 16,
+   "form_factor": "HHHL",
+   "speed_gbps": 400,
+   "source": "NVIDIA ConnectX-7 product brief",
+   "reviewed": false
+  },
+  {
+   "match": [
+    "MCX653106A-HDAT",
+    "ConnectX-6 HDR 200G"
+   ],
+   "type": "nic",
+   "tdp_w": 23,
+   "pcie_gen": 4,
+   "pcie_lanes": 16,
+   "form_factor": "HHHL",
+   "speed_gbps": 200,
+   "source": "NVIDIA ConnectX-6 VPI product brief",
    "reviewed": false
   }
  ]

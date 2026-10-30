@@ -317,8 +317,9 @@ def part_ev(part: dict) -> dict:
 #: what an absent catalog entry actually costs, per domain. Being specific matters: a vague
 #: "no rules ran" is both unhelpful and, where manifest-declared values still drive rules, false.
 _SKIPPED_CHECKS = {
-    "node": ("driver-minimum, PCIe generation and power-connector checks, all of which read the "
-             "catalog"),
+    "node": ("driver, CUDA, BIOS and BMC minimum checks, the PCIe generation, power-connector, "
+             "memory-generation, socket and network-speed checks, all of which read the catalog "
+             "unless the manifest declares the value"),
     "board": ("current headroom, dropout, thermal, output-capacitor and pinout checks, all of "
               "which read the catalog"),
 }

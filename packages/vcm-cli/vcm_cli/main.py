@@ -8,10 +8,14 @@ from pathlib import Path
 
 from vcm_ai import analyze, get_provider, to_markdown
 from vcm_ai.catalog import (
+    NUMERIC_FIELDS,
     PROJECT_CATALOG_DIR,
     USER_CATALOG,
     Catalog,
+    CatalogError,
     read_file,
+    review_part,
+    unverified_fields,
 )
 from vcm_ai.rules_datacenter import node_meta
 from vcm_core import NothingToCommit, Repository, VcmError, now_iso
@@ -494,6 +498,16 @@ def cmd_catalog(args) -> int:
         return 0
 
     catalog = Catalog.load(project_dir=Path.cwd())
+    if args.catalog_cmd == "review":
+        return _catalog_review(args, catalog)
+    if args.catalog_cmd == "unreviewed":
+        rows = [(p, unverified_fields(p)) for p in catalog.parts
+                if not args.type or p.get("type") == args.type]
+        rows = [(p, f) for p, f in rows if f]
+        for p, fields in sorted(rows, key=lambda x: (x[0].get("type", ""), x[0]["match"][0])):
+            print(f"  {p['match'][0]:26} {p.get('type', ''):6} unverified: {', '.join(fields)}")
+        print(f"{len(rows)} of {len(catalog.parts)} parts have values no human has verified")
+        return 0
     if args.catalog_cmd == "list":
         rows = [p for p in catalog.parts if not args.type or p.get("type") == args.type]
         if args.json:
@@ -534,6 +548,41 @@ def cmd_catalog(args) -> int:
     if cov["unknown"]:
         print(f"\nNo electrical rules run on the unknown parts above. Add them to "
               f"{PROJECT_CATALOG_DIR}/ or ~/.vcm/catalog/ and re-run.")
+    return 0
+
+
+def _catalog_review(args, catalog: Catalog) -> int:
+    part = catalog.find(args.mpn, args.mpn)
+    if part is None:
+        print(f"{args.mpn}: not in the catalog; import it first", file=sys.stderr)
+        return 1
+    values = {}
+    for item in args.set or []:
+        key, _, raw = item.partition("=")
+        values[key] = float(raw) if key in NUMERIC_FIELDS else raw
+    try:
+        reviewed = review_part(part, values, args.source, args.by, now_iso(), args.confirm or [])
+    except CatalogError as e:
+        print(f"vcm: error: {e}", file=sys.stderr)
+        return 1
+    target = USER_CATALOG if args.scope == "user" else Path.cwd() / PROJECT_CATALOG_DIR
+    target.mkdir(parents=True, exist_ok=True)
+    dest = target / "reviews.json"
+    existing = json.loads(dest.read_text())["parts"] if dest.is_file() else []
+    key = reviewed["match"][0].upper()
+    existing = [p for p in existing if p["match"][0].upper() != key] + [reviewed]
+    dest.write_text(json.dumps({"parts": existing}, indent=1) + "\n")
+    left = unverified_fields(reviewed)
+    print(f"recorded review of {reviewed['match'][0]} by {args.by} in {dest}")
+    print("  part is now REVIEWED" if reviewed["reviewed"] else
+          f"  still unverified: {', '.join(left)}")
+    try:
+        Repository.discover(Path.cwd()).audit.append(
+            "catalog.review", reviewed["match"][0],
+            {"fields": sorted([*values, *(args.confirm or [])]), "source": args.source},
+            actor=args.by)
+    except VcmError:
+        pass  # reviewing outside a repository is fine; there is just no audit log to write to
     return 0
 
 
@@ -802,6 +851,19 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_catalog)
     s.add_argument("--rev", default="HEAD")
     s.add_argument("--json", action="store_true")
+    s = c.add_parser("review", help="record that a human checked part values against a source")
+    s.set_defaults(fn=cmd_catalog)
+    s.add_argument("mpn")
+    s.add_argument("--by", required=True, help="who checked it")
+    s.add_argument("--source", required=True, help="citation, e.g. 'datasheet DS-123 rev 2 p.4'")
+    s.add_argument("--set", action="append", metavar="FIELD=VALUE",
+                   help="correct a value while reviewing it (repeatable)")
+    s.add_argument("--confirm", action="append", metavar="FIELD",
+                   help="confirm an existing value as correct (repeatable)")
+    s.add_argument("--scope", choices=["user", "project"], default="project")
+    s = c.add_parser("unreviewed", help="parts whose values no human has verified, by field")
+    s.set_defaults(fn=cmd_catalog)
+    s.add_argument("--type")
     s = c.add_parser("import", help="add parts from a JSON or CSV file")
     s.set_defaults(fn=cmd_catalog)
     s.add_argument("file")

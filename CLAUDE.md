@@ -21,8 +21,9 @@ confidence classes, which were already domain-agnostic. The board domain still w
 tested (`examples/demo-pcb.sh`, `tests/test_impact.py`) — it is simply no longer the product.
 Do not reintroduce PCB vocabulary into user-facing strings.
 
-Current state: a working MVP, 141 passing tests, Appwrite TablesDB live. The mechanism is built end
-to end; the *knowledge* (catalog) and *trust* (no signatures, no auth) are still demo-grade.
+Current state: a working MVP, ~180 passing tests, Appwrite TablesDB live. The mechanism is built end
+to end; the *knowledge* (catalog) is still demo-grade. *Trust* now has real primitives (Ed25519
+release signatures, API bearer auth) but no roles, revocation or key protection.
 
 ## Commands
 
@@ -114,9 +115,10 @@ rather than claiming none ran.
   catalog disclosures are all grouped. Keep it that way when adding rules.
 - **Nets come from PCB pads in the board domain**, not the schematic. A board with a schematic but
   no laid-out PCB yields no connectivity at all.
-- **`manifest_sha256` is computed over canonical JSON with that field excluded**
-  (`_manifest_hash` in `packages/workflow/vcm_workflow/release.py`). Any new manifest field is
-  automatically covered — and is the right hook for detached signatures.
+- **`manifest_sha256` is computed over canonical JSON excluding `manifest_sha256` and `signatures`**
+  (`_manifest_hash` / `UNHASHED` in `packages/workflow/vcm_workflow/release.py`). Any new manifest
+  field is automatically covered. `signatures` must stay excluded, or signing would change the digest
+  being signed.
 - **Reference resolution in KiCad 7+ lives in `instances`**, not the `Reference` property;
   `parse_schematic` overrides the property with it. Power symbols (`#`-prefixed refs) are skipped.
 - **The catalog is layered, and lookups go through it, never a module global.**
@@ -131,9 +133,26 @@ rather than claiming none ran.
   `reviewed: true` unless a human actually checked it against the datasheet.
 - **The sample KiCad files are hand-written and have never been opened in KiCad.** The parser is
   proven against assumed output, not real output.
-- **The REST API has no authentication of any kind.** `author` fields are free-text strings
-  (`services/api/vcm_api/app.py`), so PR authorship and approvals are self-asserted.
-- Revision history is **first-parent only**. No merge, no remotes, no locking.
+- **API auth is fail-closed.** `create_app` raises without `VCM_API_TOKEN`/`VCM_API_TOKENS` unless
+  `insecure=True`; there is deliberately **no module-level `app`**, so serve with
+  `python -m vcm_api` (binds 127.0.0.1) or `uvicorn --factory vcm_api.app:create_app`. In
+  insecure mode identities are self-asserted free text again. Behind auth, always take the actor
+  from `actor(request, claimed)` — never from the request body. There are no roles: any valid token
+  may do anything, including `force`-breaking a lock.
+- **The CLI is not authenticated.** `--author`/`--by`/`--holder` are self-asserted. Only the API
+  binds identity to a token, and only signatures give authenticity.
+- Signing: `trustdb.json` (project root, committed) is the trust set; verification reads the
+  *working tree* copy. A valid signature from a key not in it is reported as a failed check, not
+  silently accepted. Signatures are domain-separated (`release` vs `passport`). Never log or commit
+  anything from `~/.vcm/keys` (override: `$VCM_KEY_DIR`).
+- Remote sync (`vcm_core/remote.py`): filesystem transport only. Push validates everything (fast-
+  forward, tag conflicts, remote locks) **before** writing, re-hashes every blob it copies, and
+  syncs `releases/` and `devices/` as create-only records (release signatures are unioned). PRs,
+  evidence-index conflicts and S3/HTTP/SSH are not handled.
+- Locks (`vcm_core/locks.py`) are advisory and enforced only in `Repository.commit` and `push`.
+- `Repository.fast_forward` is the only way a branch moves other than `commit`; it refuses
+  divergence and requires a clean tree when the branch is checked out. PR merge and pull use it.
+- Revision history is **first-parent only**. No merge.
 - `kicad-cli` DRC/ERC is wrapped but skipped when absent, and has never run against a real install in CI.
 
 ## Known gaps and the agreed fix plan
@@ -144,13 +163,13 @@ engineering.
 | # | Gap | Effort | Status |
 |---|-----|--------|--------|
 | 2 | Component DB has 4 parts | ~1–2 days | **largely done** — 54 parts, layered catalog, CSV import, coverage disclosure. Remaining: per-value attribution, and getting entries actually datasheet-reviewed |
-| 5 | No release signatures | ~1–2 days | open |
-| 6 | No API auth | ~1 day | open |
+| 5 | No release signatures | ~1–2 days | **done** — pure-Python Ed25519 (`vcm_core/ed25519.py`, RFC 8032 vectors in tests), `vcm key`, `vcm release sign`, `trustdb.json`, signed passports. Open: key revocation/expiry, encrypted private keys |
+| 6 | No API auth | ~1 day | **done** — bearer tokens, fail-closed, 127.0.0.1 default, identity bound to token. Open: roles/permissions, TLS, rotation, audit log |
 | 3 | Hand-made KiCad fixtures | ~2–3 days | open |
 | 1 | Schematic nets not traced | ~1–2 weeks | open |
-| 4 | Single-user, no remotes | ~2–3 weeks | **partly addressed** — the graph now has a shared Appwrite TablesDB backend (`vcm_graph.backends`). Devices and releases are still local JSON. Merge is still deliberately not planned |
+| 4 | Single-user, no remotes | ~2–3 weeks | **largely addressed** — filesystem remotes (push/pull/clone, fast-forward only), file locks, protected branches, PR merge (fast-forward), plus the shared Appwrite graph backend. Open: S3/HTTP transports, PR sync, required-reviewer lists. Merge is still deliberately not planned |
 
-**Recommended order: 6, then 5, then 3 — 3 de-risks 1 by supplying real files.**
+**Remaining order: 3, then 1 — 3 de-risks 1 by supplying real files.** (6 and 5 are done; 4 is largely done.)
 
 ### 2. Component catalog — mostly built
 
@@ -168,24 +187,19 @@ Still open: per-value attribution (each field carrying its own `{"value", "sourc
 rather than one `source` per part), and getting entries genuinely datasheet-reviewed so
 `reviewed: true` means something.
 
-### 5. Release signing
+### 5. Release signing — built
 
-`manifest_sha256` is already the right digest to sign. Add `vcm key gen`, `vcm release sign <name>`,
-and a `signature` check inside `verify_release` alongside the existing ones. Ed25519 — optional
-`cryptography` dependency with a clear error when absent (or ~80 lines of pure-Python RFC 8032 to
-preserve the zero-dependency core). Public keys in a committed `trustdb.json` so verification is
-offline and the trust set is itself version-controlled. Sign device passports with the same key.
+`vcm key gen <name> [--trust]`, `vcm release sign <name> --key <k>`, `vcm release verify
+--require-signature`, `vcm device passport --sign` / `verify-passport`. Signs `manifest_sha256`
+(passports: the canonical-JSON digest minus `signatures`) with pure-Python Ed25519. Verification
+reads `trustdb.json` and reports `authenticated` separately from `ok`: an unsigned release still
+verifies (hashes prove consistency), but is never described as authenticated. Tests:
+`tests/test_signing.py`. Open: revocation/expiry, encrypted private keys, signing commits/PRs.
 
-Today `release verify` only re-hashes: it catches accidental and naive tampering, but anyone who can
-rewrite both the manifest and the object store can forge a release. Hashes prove consistency, not
-authenticity.
+### 6. API authentication — built
 
-### 6. API authentication
-
-Bearer-token middleware, token from `VCM_API_TOKEN`. **Fail closed** — refuse to start without one
-unless `--insecure` is passed explicitly. Default the uvicorn bind to `127.0.0.1` and document it.
-Bind identity to the token so PR authors and approvals stop being self-asserted; this half-fixes
-module 9's "no identity or permissions" gap for free.
+`vcm_api/auth.py` + the middleware in `create_app`. Open: roles, TLS, token rotation, audit log.
+Tests: `tests/test_api_auth.py`.
 
 ### 3. Real KiCad fixtures
 
@@ -214,22 +228,21 @@ Extend `Component` with a `pins` field so pinout rules work pre-layout.
 report disagreements as a `verified` finding. A schematic/layout mismatch is genuinely valuable to
 catch and nobody else in the local-first space does it.
 
-### 4. Single-user — reframe rather than fix
+### 4. Collaboration — built, deliberately not Git
 
-**Do not implement three-way merge for PCBs.** Merging two divergent board layouts is not a
-well-defined operation, and real hardware teams don't do it — they lock.
+Do **not** implement three-way merge for PCBs: merging two board layouts is not a well-defined
+operation, and real hardware teams lock instead.
 
-- **Sync, yes:** push/pull against a remote object store. Content-addressed blobs make this
-  straightforward (S3 / filesystem / Git-backed transport, as `docs/roadmap.md` Phase 3 proposes).
-- **Locking instead of merge:** `vcm lock <file>` with holder identity and expiry — what Altium 365
-  and PDM systems actually offer, at a fraction of the work.
-- **Merge only where meaningful:** BOM CSV and `vcm.json` genuinely three-way merge. For
-  `.kicad_pcb`, offer "pick a side, here is the semantic diff between them" — which VCM is uniquely
-  equipped to show.
-- Identity and permissions fall out of the auth work in gap 6.
+Built: `vcm remote | push | pull | clone` (filesystem transport, fast-forward only), `vcm lock |
+unlock | locks` (local or `--remote`), `vcm protect`, `vcm config required_approvals`, `vcm pr
+merge`. Tests: `tests/test_remote.py`, `test_locks.py`, `test_merge.py`.
+
+Open: S3/HTTP/SSH transports (content-addressed blobs make them straightforward); syncing PRs;
+required-reviewer lists; merging BOM CSV / `vcm.json` three-way; for `.kicad_pcb` "pick a side, here
+is the semantic diff between them". Still not planned: issues, a CI service, a hosted web UI.
 
 ## Not implemented — do not describe these as working
 
 KiCad and FreeCAD plugins, the Git bridge, the web app and the desktop app (`integrations/`, `apps/`)
 are README stubs. "GPU Git" for GPUOS/VACE (`docs/gpu-git.md`) is a scope document only. Hardware
-pull requests are **partial**: a local review record with no merge action, identity or permissions.
+pull requests are fast-forward only: no three-way merge, no required-reviewer lists, and identity is verified only behind API auth.

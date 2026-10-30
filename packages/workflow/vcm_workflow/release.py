@@ -10,10 +10,14 @@ from pathlib import Path
 
 import vcm_core
 from vcm_core import Repository, VcmError, canonical_json, now_iso, sha256_bytes, sha256_file
+from vcm_core.signing import add_signature, sign_digest, verify_signature
 from vcm_validation import validate_revision
 from vcm_validation.kicad_cli import kicad_version
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+SIG_PURPOSE = "release"
+# Excluded from the hash so that signing a release does not change the digest being signed.
+UNHASHED = ("manifest_sha256", "signatures")
 
 
 def to_yaml(obj, indent: int = 0) -> str:
@@ -51,7 +55,7 @@ def _scalar(v) -> str:
 
 
 def _manifest_hash(manifest: dict) -> str:
-    body = {k: v for k, v in manifest.items() if k != "manifest_sha256"}
+    body = {k: v for k, v in manifest.items() if k not in UNHASHED}
     return sha256_bytes(canonical_json(body))
 
 
@@ -94,8 +98,24 @@ def load_manifest(repo: Repository, name_or_path: str) -> dict:
     return repo.load_record("releases", name_or_path)
 
 
-def verify_release(repo: Repository, name_or_path: str, worktree: bool = False) -> dict:
-    """Re-check manifest self-hash, revision object, every artifact blob and (optionally) the working tree."""
+def sign_release(repo: Repository, name: str, key_name: str) -> dict:
+    """Attach a detached Ed25519 signature over ``manifest_sha256`` to a stored release."""
+    m = repo.load_record("releases", name)
+    if m.get("manifest_sha256") != _manifest_hash(m):
+        raise VcmError(f"release {name} fails its own hash check; refusing to sign it")
+    add_signature(m, sign_digest(key_name, m["manifest_sha256"], SIG_PURPOSE))
+    repo.save_record("releases", name, m)
+    return m
+
+
+def verify_release(repo: Repository, name_or_path: str, worktree: bool = False,
+                   require_signature: bool = False) -> dict:
+    """Re-check manifest self-hash, revision object, every artifact blob and (optionally) the working tree.
+
+    Signatures are checked against ``trustdb.json``. An unsigned release still verifies unless
+    ``require_signature`` is set, because hashes alone prove consistency, not authenticity; the
+    result's ``authenticated`` field says whether a trusted key actually vouched for it.
+    """
     m = load_manifest(repo, name_or_path)
     checks: list[dict] = []
 
@@ -122,6 +142,17 @@ def verify_release(repo: Repository, name_or_path: str, worktree: bool = False) 
             f = repo.root / path
             ok = f.is_file() and sha256_file(f) == a["hash"]
             check(f"worktree:{path}", ok, "" if ok else "working file differs from release")
+    signers = [verify_signature(sig, m.get("manifest_sha256", ""), SIG_PURPOSE, repo.root)
+               for sig in m.get("signatures", [])]
+    for sg in signers:
+        check(f"signature:{sg['key_id']}", sg["valid"] and sg["trusted"],
+              f"{sg['name']}: " + (sg["detail"] or "valid signature from a trusted key"))
+    authenticated = any(sg["valid"] and sg["trusted"] for sg in signers)
+    if require_signature:
+        check("signature_required", authenticated, "a trusted key signed this release"
+              if authenticated else "no valid signature from a key in trustdb.json")
     problems = [c for c in checks if not c["ok"]]
     return {"release": m["name"], "revision": rid, "ok": not problems, "checks": checks,
-            "problems": problems}
+            "problems": problems, "authenticated": authenticated,
+            "signers": [{"key_id": s_["key_id"], "name": s_["name"], "valid": s_["valid"],
+                         "trusted": s_["trusted"]} for s_ in signers]}

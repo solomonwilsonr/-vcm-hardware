@@ -1,0 +1,9 @@
+{
+  "batch": "RACK-12",
+  "notes": "",
+  "qr_payload": "https://vcm.example.com/device/NODE-0001",
+  "registered_at": "2026-10-30T23:28:37Z",
+  "release": "R1.0",
+  "revision": "f710ff3b44a3c1f4a241cca2199af04f5eac88d2254b12240c328891c85edf80",
+  "serial": "NODE-0001"
+}

@@ -1,0 +1,53 @@
+{
+  "artifacts": {
+    "firmware/driver.conf": {
+      "category": "firmware",
+      "hash": "22cc3adb183756bd65d759b6e5e47c07cb50b7791babc312a566628a27fe1e3e",
+      "size": 175
+    },
+    "gpu-node-01.node.json": {
+      "category": "inventory",
+      "hash": "d9c422d5c532e17d1c4f9918a34c1334628f21eeaaf6ea42c3394a97d3d9f92c",
+      "size": 11765
+    },
+    "vcm.json": {
+      "category": "docs",
+      "hash": "990d218ee022395a04e72517b2f0ce5d62a7013229933a78ca37fafbb4fde73a",
+      "size": 781
+    }
+  },
+  "created_at": "2026-10-30T23:28:37Z",
+  "manifest_sha256": "53064e94026202b1e6c2de71ca7bb3e74dc5b63cc55441f74273fa68705d039f",
+  "name": "R1.1",
+  "parents": [
+    "f710ff3b44a3c1f4a241cca2199af04f5eac88d2254b12240c328891c85edf80"
+  ],
+  "revision": "0df9e4048e766a50471a572a7b32ad18a0ca30700cf3abd6d3c6f4947cf25d5c",
+  "revision_message": "v1.1 upgrade accelerators to H100 NVL 94GB",
+  "schema": "vcm-release/1",
+  "signatures": [
+    {
+      "alg": "ed25519",
+      "key_id": "2e76ce4677858593",
+      "name": "release-bot",
+      "public": "943a1ea3fee9dffc6c7014528f77d7a0c7c7d25d72d0d3e948327d8096c98ce1",
+      "signature": "b7802dc4e3495c5a168e3689979955e098a575b7813e3c130150aee3b3abefc75176d776715a5f1ef0951872950af54eafa23d6d4ef01454bb7f43c9309ffa0d",
+      "signed_at": "2026-10-30T23:28:39Z"
+    }
+  ],
+  "toolchain": {
+    "kicad_cli": "not installed",
+    "platform": "Linux-6.18.44-fc-v185-x86_64-with-glibc2.39",
+    "python": "3.13.17",
+    "vcm": "0.1.0"
+  },
+  "validation": {
+    "counts": {
+      "error": 0,
+      "warning": 0
+    },
+    "evidence_hash": "e00c141febc123399c64933e2a1971e359034fcf78c8589b38cdd6b5331f15b3",
+    "kicad_cli": "not run",
+    "status": "pass"
+  }
+}

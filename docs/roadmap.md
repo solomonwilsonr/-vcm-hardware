@@ -17,14 +17,14 @@ The MVP described in the README exists: local repositories, KiCad/BOM parsing, s
 
 - Grow the component DB (importable from CSV/JSON, versioned, with source attribution per value).
 - More rules: connector pinout, decoupling per power pin, net voltage propagation, DNP handling, firmware pin-map checks.
-- Release signing (for example Sigstore or minisign style detached signatures) and signed device passports.
+- ~~Release signing and signed device passports~~ — **done** (Ed25519, `trustdb.json`). Still open: revocation, encrypted keys.
 - Evidence ingestion: attach bench results, lab reports and CI outputs to revisions and link them to graph tests.
 
 ## Phase 3 (weeks 7-9): collaboration
 
-- Remote repositories and sync (git-backed transport first), shared object store.
-- Pull requests with identities, required reviewers, merge action and branch protection rules.
-- PostgreSQL graph backend and a multi-repository service mode for the API with authentication.
+- Remote repositories and sync: **filesystem remotes done** (push/pull/clone, locks). Open: S3/HTTP/Git-backed transports.
+- Pull requests: **identities (API), required approvals, fast-forward merge and branch protection done**. Open: required-reviewer lists, PR sync across remotes.
+- PostgreSQL graph backend and a multi-repository service mode for the API (bearer-token authentication is done; roles and TLS are open).
 - Git bridge: map VCM revisions to Git commits and tags; store large artifacts via the VCM object store.
 
 ## Phase 4 (weeks 10-12): reach

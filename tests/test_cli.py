@@ -101,3 +101,48 @@ def test_bom_validate_file_needs_no_repository(tmp_path, capsys):
     good.write_text("Reference,Value,Footprint\nR1,1k,R_0603\n")
     assert main(["-C", str(tmp_path), "bom", "validate", str(good)]) == 0
     assert "status: pass" in capsys.readouterr().out
+
+
+def test_signing_flow(cli_repo, capsys, tmp_path, monkeypatch):
+    monkeypatch.setenv("VCM_KEY_DIR", str(tmp_path / "keys"))
+    assert run(capsys, cli_repo, "release", "create", "R1", "--rev", "v1.0")[0] == 0
+    assert run(capsys, cli_repo, "release", "verify", "R1", "--require-signature")[0] == 1
+    assert run(capsys, cli_repo, "key", "gen", "alice", "--trust")[0] == 0
+    assert run(capsys, cli_repo, "release", "sign", "R1", "--key", "alice")[0] == 0
+    code, out = run(capsys, cli_repo, "release", "verify", "R1", "--require-signature")
+    assert code == 0 and "signed by alice" in out
+    assert run(capsys, cli_repo, "device", "register", "SN-1", "--release", "R1")[0] == 0
+    code, out = run(capsys, cli_repo, "device", "passport", "SN-1", "--sign", "alice")
+    passport_file = tmp_path / "passport.json"
+    passport_file.write_text(out)
+    code, out = run(capsys, cli_repo, "device", "verify-passport", str(passport_file))
+    assert code == 0 and "authenticated" in out
+    assert "alice" in run(capsys, cli_repo, "key", "trusted")[1]
+
+
+def test_remote_lock_and_merge_flow(cli_repo, capsys, tmp_path, monkeypatch):
+    origin = str(tmp_path / "origin")
+    monkeypatch.setenv("VCM_AUTHOR", "alice")
+    assert run(capsys, cli_repo, "remote", "add", "origin", origin)[0] == 0
+    code, out = run(capsys, cli_repo, "push")
+    assert code == 0 and "branch main: updated" in out
+    clone = str(tmp_path / "clone")
+    assert main(["clone", origin, clone]) == 0
+    capsys.readouterr()
+    assert run(capsys, clone, "log", "--json")[0] == 0
+
+    assert run(capsys, cli_repo, "lock", "firmware/driver.conf", "--remote", "origin")[0] == 0
+    assert "alice" in run(capsys, cli_repo, "locks", "--remote", "origin")[1]
+    monkeypatch.setenv("VCM_AUTHOR", "bob")
+    (tmp_path / "clone" / "firmware" / "driver.conf").write_text("changed\n")
+    assert run(capsys, clone, "commit", "-m", "edit driver")[0] == 0
+    assert run(capsys, clone, "push")[0] == 1  # alice holds the remote lock
+    assert run(capsys, cli_repo, "unlock", "firmware/driver.conf", "--remote", "origin")[0] == 1
+    assert run(capsys, cli_repo, "unlock", "firmware/driver.conf", "--remote", "origin",
+               "--force")[0] == 0
+    assert run(capsys, clone, "push")[0] == 0
+
+    assert run(capsys, clone, "protect", "add", "main")[0] == 0
+    (tmp_path / "clone" / "firmware" / "driver.conf").write_text("again\n")
+    assert run(capsys, clone, "commit", "-m", "direct")[0] == 1  # protected
+    assert run(capsys, clone, "config", "required_approvals", "1")[0] == 0

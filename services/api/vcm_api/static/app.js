@@ -45,7 +45,14 @@
 
   /* ------------------------------------------------------------------ api */
 
-  async function api(path, opts) {
+  /* The bearer token lives in sessionStorage only: gone when the tab closes, never sent
+     anywhere but this origin. */
+  const token = {
+    get() { try { return sessionStorage.getItem("vcm-token") || ""; } catch (e) { return ""; } },
+    set(v) { try { sessionStorage.setItem("vcm-token", v); } catch (e) { /* private mode */ } },
+  };
+
+  async function api(path, opts, retried) {
     const init = Object.assign({ headers: { accept: "application/json" } }, opts);
     if (init.json !== undefined) {
       init.method = init.method || "POST";
@@ -53,7 +60,12 @@
       init.body = JSON.stringify(init.json);
       delete init.json;
     }
+    if (token.get()) init.headers = Object.assign({}, init.headers, { authorization: "Bearer " + token.get() });
     const r = await fetch(path, init);
+    if (r.status === 401 && !retried) {
+      const entered = window.prompt("This VCM API requires an access token:");
+      if (entered) { token.set(entered.trim()); return api(path, opts, true); }
+    }
     const ct = r.headers.get("content-type") || "";
     const payload = ct.includes("json") ? await r.json().catch(() => null) : await r.text();
     if (!r.ok) {
@@ -1238,7 +1250,7 @@
         errBox(e),
         h("p", { class: "empty" },
           "Start the API against a VCM repository, for example: " +
-          "VCM_REPO=/path/to/repo python -m uvicorn vcm_api.app:app"));
+          "VCM_API_TOKEN=<16+ chars> python -m vcm_api --repo /path/to/repo"));
     }
   }
 

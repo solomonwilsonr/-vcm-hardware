@@ -5,11 +5,13 @@ import os
 import re
 
 from vcm_core import Repository, VcmError, now_iso
+from vcm_core.signing import add_signature, document_digest, sign_digest, verify_signature
 from vcm_diff import diff_revisions
 from vcm_parsers import design_from_revision
 
 from .qr import qr_svg
 
+PASSPORT_PURPOSE = "passport"
 SERIAL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
@@ -61,6 +63,23 @@ def passport(repo: Repository, serial: str) -> dict:
                        if validation else None),
         "qr": {"payload": dev["qr_payload"], "svg": qr_svg(dev["qr_payload"])},
     }
+
+
+def sign_passport(repo: Repository, serial: str, key_name: str) -> dict:
+    """A passport with a detached signature. The QR SVG is dropped (it is derivable from the
+    payload) so the signed document is small and stable enough to verify anywhere, offline."""
+    doc = passport(repo, serial)
+    doc["qr"] = {"payload": doc["qr"]["payload"]}
+    return add_signature(doc, sign_digest(key_name, document_digest(doc), PASSPORT_PURPOSE))
+
+
+def verify_passport(doc: dict, trust_root) -> dict:
+    """Check every signature on a passport document against ``trustdb.json`` under ``trust_root``."""
+    digest = document_digest(doc)
+    signers = [verify_signature(s, digest, PASSPORT_PURPOSE, trust_root)
+               for s in doc.get("signatures", [])]
+    return {"serial": doc.get("serial"), "signers": signers,
+            "authenticated": any(s["valid"] and s["trusted"] for s in signers)}
 
 
 def affected_by_component(repo: Repository, ref: str, value: str | None = None) -> list[dict]:

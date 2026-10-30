@@ -19,7 +19,7 @@ def open_pr(repo: Repository, base: str, head: str, title: str, author: str = "u
         if not repo.latest_evidence(rid, "validation"):
             validate_revision(repo, rid)
     pr = {"id": _next_id(repo), "title": title, "state": "open", "author": author,
-          "created_at": now_iso(), "base": b, "head": h,
+          "created_at": now_iso(), "base": b, "head": h, "base_ref": base, "head_ref": head,
           "diff": diff_revisions(repo, b, h), "impact": analyze(repo, b, h),
           "validation": compare_validation(repo, b, h), "comments": [], "approvals": []}
     repo.save_record(KIND, str(pr["id"]), pr)
@@ -30,9 +30,16 @@ def get_pr(repo: Repository, pr_id: int) -> dict:
     pr = repo.load_record(KIND, str(pr_id))
     crit = [f["id"] for f in pr["impact"]["findings"] if f["severity"] == "critical"]
     regression = pr["validation"]["regression"]
-    pr["status"] = {"approvals": len(pr["approvals"]), "critical_findings": crit,
-                    "validation_regression": regression,
-                    "ready_for_merge": pr["state"] == "open" and bool(pr["approvals"]) and not regression}
+    need = max(1, int(repo.config().get("required_approvals", 1)))
+    have = len(pr["approvals"])
+    blockers = []
+    if have < need:
+        blockers.append(f"needs {need - have} more approval(s)")
+    if regression:
+        blockers.append("validation regression")
+    pr["status"] = {"approvals": have, "required_approvals": need, "critical_findings": crit,
+                    "validation_regression": regression, "blockers": blockers,
+                    "ready_for_merge": pr["state"] == "open" and not blockers}
     return pr
 
 
@@ -58,10 +65,44 @@ def add_comment(repo: Repository, pr_id: int, author: str, text: str) -> dict:
 
 def approve(repo: Repository, pr_id: int, by: str) -> dict:
     def fn(pr):
+        if by == pr["author"] and by != "unknown":
+            raise VcmError("an author cannot approve their own pull request")
         if any(a["by"] == by for a in pr["approvals"]):
             return
         pr["approvals"].append({"by": by, "at": now_iso()})
     return _update(repo, pr_id, fn)
+
+
+def _target_branch(repo: Repository, pr: dict) -> str:
+    """The branch this PR merges into: the named base branch, or the one branch sitting on base."""
+    branches = repo.branches()
+    if pr.get("base_ref") in branches:
+        return pr["base_ref"]
+    at_base = [n for n, tip in branches.items() if tip == pr["base"]]
+    if len(at_base) == 1:
+        return at_base[0]
+    raise VcmError("cannot merge: the PR base is not the tip of exactly one branch "
+                   "(open the PR against a branch name)")
+
+
+def merge_pr(repo: Repository, pr_id: int, by: str) -> dict:
+    """Fast-forward the base branch to the PR head. There is no merge commit and no three-way
+    merge: if the base branch has moved or the histories diverged the PR must be redone."""
+    if not by or by == "unknown":
+        raise VcmError("merging needs an identity (--by)")
+    pr = get_pr(repo, pr_id)
+    if pr["state"] != "open":
+        raise VcmError(f"PR {pr_id} is {pr['state']}")
+    if pr["status"]["blockers"]:
+        raise VcmError(f"PR {pr_id} is not mergeable: " + "; ".join(pr["status"]["blockers"]))
+    branch = _target_branch(repo, pr)
+    if repo.branches()[branch] != pr["base"]:
+        raise VcmError(f"{branch} has moved since PR {pr_id} was opened; open a new PR")
+    repo.fast_forward(branch, pr["head"])
+    raw = repo.load_record(KIND, str(pr_id))
+    raw.update(state="merged", merged_by=by, merged_at=now_iso(), merged_into=branch)
+    repo.save_record(KIND, str(pr_id), raw)
+    return get_pr(repo, pr_id)
 
 
 def close_pr(repo: Repository, pr_id: int) -> dict:
@@ -77,8 +118,12 @@ def render_pr(pr: dict) -> str:
          f"  critical findings: {', '.join(s['critical_findings']) or 'none'}",
          f"  validation: {pr['validation']['status']['from']} -> {pr['validation']['status']['to']}"
          f"{' (REGRESSION)' if s['validation_regression'] else ''}",
-         f"  approvals: {', '.join(a['by'] for a in pr['approvals']) or 'none'}",
-         f"  ready for merge: {s['ready_for_merge']}"]
+         f"  approvals: {', '.join(a['by'] for a in pr['approvals']) or 'none'}"
+         f" (need {s['required_approvals']})",
+         f"  ready for merge: {s['ready_for_merge']}"
+         + (f"  blocked: {'; '.join(s['blockers'])}" if s["blockers"] else "")]
+    if pr["state"] == "merged":
+        L.append(f"  merged into {pr['merged_into']} by {pr['merged_by']} at {pr['merged_at']}")
     for c in pr["comments"]:
         L.append(f"  comment by {c['author']}: {c['text']}")
     return "\n".join(L)

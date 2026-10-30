@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from vcm_ai.catalog import (
     Catalog,
     read_file,
 )
-from vcm_core import NothingToCommit, Repository, VcmError
+from vcm_core import NothingToCommit, Repository, VcmError, remote, signing
 from vcm_diff import diff_revisions, render_text
 from vcm_graph import build_graph, project_config
 from vcm_graph.backends.appwrite_backend import health as appwrite_health
@@ -25,6 +26,8 @@ from vcm_trace import (
     list_devices,
     passport,
     register_device,
+    sign_passport,
+    verify_passport,
 )
 from vcm_validation import check_bom_text, compare_validation, validate_revision
 from vcm_workflow import (
@@ -35,11 +38,13 @@ from vcm_workflow import (
     explain,
     get_pr,
     list_prs,
+    merge_pr,
     open_pr,
     plan_rollback,
     render_plan,
     render_pr,
     render_timeline,
+    sign_release,
     timeline,
     verify_release,
 )
@@ -198,15 +203,48 @@ def cmd_release_create(args) -> int:
 
 
 def cmd_release_verify(args) -> int:
-    res = verify_release(_repo(args), args.release, worktree=args.worktree)
+    res = verify_release(_repo(args), args.release, worktree=args.worktree,
+                         require_signature=args.require_signature)
     if args.json:
         _dump(res)
     else:
         for c in res["problems"]:
             print(f"FAIL {c['check']}: {c['detail']}")
+        auth = ("signed by " + ", ".join(s["name"] for s in res["signers"] if s["valid"] and s["trusted"])
+                if res["authenticated"] else "UNSIGNED or untrusted: integrity only, not authenticity")
         print(f"release {res['release']}: {'OK' if res['ok'] else 'VERIFICATION FAILED'} "
-              f"({len(res['checks'])} checks)")
+              f"({len(res['checks'])} checks); {auth}")
     return 0 if res["ok"] else 1
+
+
+def cmd_release_sign(args) -> int:
+    m = sign_release(_repo(args), args.name, args.key)
+    print(f"signed release {m['name']} with {args.key} "
+          f"({len(m['signatures'])} signature(s), digest {m['manifest_sha256'][:16]})")
+    return 0
+
+
+def cmd_key(args) -> int:
+    if args.key_cmd == "gen":
+        info = signing.generate_key(args.name)
+        print(f"created key {info['name']}  id {info['key_id']}\n  public: {info['public']}\n"
+              f"  private key stored in {signing.key_dir()} (mode 0600); back it up, never commit it")
+        if args.trust:
+            signing.trust_key(_repo(args).root, info["name"], info["public"])
+            print(f"  trusted in {signing.TRUSTDB}; commit that file to share the trust set")
+    elif args.key_cmd == "list":
+        for k in signing.list_keys():
+            print(f"{k['name']}  id {k['key_id']}  {k['public']}")
+    elif args.key_cmd == "trust":
+        t = signing.trust_key(_repo(args).root, args.name, args.public)
+        print(f"trusted {t['name']} (id {t['key_id']})")
+    elif args.key_cmd == "untrust":
+        signing.untrust_key(_repo(args).root, args.key_id)
+        print(f"removed {args.key_id} from {signing.TRUSTDB}")
+    elif args.key_cmd == "trusted":
+        for kid, k in sorted(signing.load_trustdb(_repo(args).root)["keys"].items()):
+            print(f"{kid}  {k['name']}  added {k['added_at']}")
+    return 0
 
 
 def cmd_rollback(args) -> int:
@@ -229,10 +267,25 @@ def cmd_device_list(args) -> int:
 
 
 def cmd_device_passport(args) -> int:
+    if args.sign:
+        _dump(sign_passport(_repo(args), args.serial, args.sign))
+        return 0
     p = passport(_repo(args), args.serial)
     p["qr"] = {"payload": p["qr"]["payload"]} if args.no_svg else p["qr"]
     _dump(p)
     return 0
+
+
+def cmd_device_verify_passport(args) -> int:
+    res = verify_passport(json.loads(Path(args.file).read_text()), _repo(args).root)
+    if args.json:
+        _dump(res)
+    for s in res["signers"]:
+        ok = s["valid"] and s["trusted"]
+        print(f"{'OK  ' if ok else 'FAIL'} {s['name']} ({s['key_id']}) {s['detail']}")
+    print(f"passport {res['serial']}: " + ("authenticated" if res["authenticated"] else
+                                           "NOT authenticated"))
+    return 0 if res["authenticated"] else 1
 
 
 def cmd_device_affected(args) -> int:
@@ -276,8 +329,107 @@ def cmd_pr(args) -> int:
         print(render_pr(add_comment(repo, args.id, args.author, args.text)))
     elif args.pr_cmd == "approve":
         print(render_pr(approve(repo, args.id, args.by)))
+    elif args.pr_cmd == "merge":
+        print(render_pr(merge_pr(repo, args.id, args.by)))
     elif args.pr_cmd == "close":
         print(render_pr(close_pr(repo, args.id)))
+    return 0
+
+
+def _identity(args) -> str:
+    return getattr(args, "holder", None) or os.environ.get("VCM_AUTHOR", "unknown")
+
+
+def cmd_remote(args) -> int:
+    repo = _repo(args)
+    if args.remote_cmd == "add":
+        remote.add_remote(repo, args.name, args.url)
+    elif args.remote_cmd == "remove":
+        remote.remove_remote(repo, args.name)
+    else:
+        for name, url in sorted(remote.list_remotes(repo).items()):
+            print(f"{name}\t{url}")
+    return 0
+
+
+def _print_sync(verb: str, res: dict) -> None:
+    print(f"{verb} {res['remote']}")
+    for kind, label in (("branches", "branch"), ("tags", "tag")):
+        for name, what in sorted(res[kind].items()):
+            print(f"  {label} {name}: {what}")
+    print(f"  {res['objects']} object(s), {res['records']} record(s) transferred")
+
+
+def cmd_push(args) -> int:
+    _print_sync("pushed to", remote.push(_repo(args), args.remote, args.branch, args.force,
+                                         holder=_identity(args)))
+    return 0
+
+
+def cmd_pull(args) -> int:
+    _print_sync("pulled from", remote.pull(_repo(args), args.remote, args.branch, args.force))
+    return 0
+
+
+def cmd_clone(args) -> int:
+    repo = remote.clone(args.url, args.dest)
+    print(f"cloned {args.url} into {repo.root} (branch {repo.current_branch})")
+    return 0
+
+
+def _lock_store(args):
+    repo = _repo(args)
+    return remote.remote_locks(remote.resolve_remote(repo, args.remote)) if args.remote else repo.locks
+
+
+def cmd_lock(args) -> int:
+    lock = _lock_store(args).acquire(args.path, _identity(args), args.ttl, args.note)
+    print(f"locked {lock['path']} for {lock['holder']} until {lock['expires_at']}")
+    return 0
+
+
+def cmd_unlock(args) -> int:
+    lock = _lock_store(args).release(args.path, _identity(args), args.force)
+    print(f"unlocked {lock['path']} (was held by {lock['holder']})")
+    return 0
+
+
+def cmd_locks(args) -> int:
+    locks = _lock_store(args).list()
+    if args.json:
+        _dump(locks)
+    for lk in locks:
+        print(f"{lk['path']}  {lk['holder']}  until {lk['expires_at']}" + (f"  {lk['note']}" if lk["note"] else ""))
+    if not locks and not args.json:
+        print("no active locks")
+    return 0
+
+
+def cmd_protect(args) -> int:
+    repo = _repo(args)
+    cfg = repo.config()
+    names = set(cfg.get("protected_branches", []))
+    if args.protect_cmd == "add":
+        names.add(args.branch)
+    elif args.protect_cmd == "remove":
+        names.discard(args.branch)
+    cfg["protected_branches"] = sorted(names)
+    repo.save_config(cfg)
+    print("protected branches: " + (", ".join(sorted(names)) or "none"))
+    return 0
+
+
+def cmd_config(args) -> int:
+    repo = _repo(args)
+    cfg = repo.config()
+    if args.value is None:
+        print(cfg.get(args.key, ""))
+        return 0
+    if args.key != "required_approvals" or not args.value.isdigit() or int(args.value) < 1:
+        raise VcmError("only `required_approvals` (an integer >= 1) can be set")
+    cfg[args.key] = int(args.value)
+    repo.save_config(cfg)
+    print(f"{args.key} = {args.value}")
     return 0
 
 
@@ -456,7 +608,29 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_release_verify)
     s.add_argument("release", help="release name or manifest file")
     s.add_argument("--worktree", action="store_true")
+    s.add_argument("--require-signature", action="store_true",
+                   help="fail unless a key in trustdb.json signed this release")
     s.add_argument("--json", action="store_true")
+    s = rel.add_parser("sign", help="attach a detached Ed25519 signature")
+    s.set_defaults(fn=cmd_release_sign)
+    s.add_argument("name")
+    s.add_argument("--key", required=True, help="name of a key from `vcm key list`")
+
+    k = sub.add_parser("key", help="signing keys and the trusted-key set").add_subparsers(
+        dest="key_cmd", required=True)
+    s = k.add_parser("gen", help="create a signing key in ~/.vcm/keys")
+    s.set_defaults(fn=cmd_key)
+    s.add_argument("name")
+    s.add_argument("--trust", action="store_true", help="also add it to this project's trustdb.json")
+    k.add_parser("list", help="local signing keys").set_defaults(fn=cmd_key)
+    s = k.add_parser("trust", help="trust a public key for this project")
+    s.set_defaults(fn=cmd_key)
+    s.add_argument("name")
+    s.add_argument("public", help="64 hex characters")
+    s = k.add_parser("untrust", help="stop trusting a key")
+    s.set_defaults(fn=cmd_key)
+    s.add_argument("key_id")
+    k.add_parser("trusted", help="keys this project trusts").set_defaults(fn=cmd_key)
 
     rb = sub.add_parser("rollback", help="rollback planning").add_subparsers(dest="rb_cmd", required=True)
     s = rb.add_parser("plan")
@@ -477,6 +651,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_device_passport)
     s.add_argument("serial")
     s.add_argument("--no-svg", action="store_true", help="omit the QR SVG from the output")
+    s.add_argument("--sign", metavar="KEY", help="emit a signed passport (QR SVG omitted)")
+    s = dev.add_parser("verify-passport", help="check a signed passport file against trustdb.json")
+    s.set_defaults(fn=cmd_device_verify_passport)
+    s.add_argument("file")
+    s.add_argument("--json", action="store_true")
     s = dev.add_parser("affected")
     s.set_defaults(fn=cmd_device_affected)
     s.add_argument("--component")
@@ -505,9 +684,60 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_pr)
     s.add_argument("id", type=int)
     s.add_argument("--by", required=True)
+    s = pr.add_parser("merge", help="fast-forward the base branch to the PR head")
+    s.set_defaults(fn=cmd_pr)
+    s.add_argument("id", type=int)
+    s.add_argument("--by", required=True)
     s = pr.add_parser("close")
     s.set_defaults(fn=cmd_pr)
     s.add_argument("id", type=int)
+
+    r = sub.add_parser("remote", help="shared remotes (filesystem paths)").add_subparsers(
+        dest="remote_cmd", required=True)
+    s = r.add_parser("add")
+    s.set_defaults(fn=cmd_remote)
+    s.add_argument("name")
+    s.add_argument("url", help="directory path or file:// URL")
+    s = r.add_parser("remove")
+    s.set_defaults(fn=cmd_remote)
+    s.add_argument("name")
+    r.add_parser("list").set_defaults(fn=cmd_remote)
+    for name, fn, h in (("push", cmd_push, "send branches, tags, objects and records to a remote"),
+                        ("pull", cmd_pull, "fetch from a remote and fast-forward (never merges)")):
+        s = add(name, fn, h)
+        s.add_argument("remote", nargs="?", default="origin")
+        s.add_argument("branch", nargs="?")
+        s.add_argument("--force", action="store_true", help="allow a non-fast-forward update")
+        if name == "push":
+            s.add_argument("--holder", help="identity checked against remote locks (default $VCM_AUTHOR)")
+    s = add("clone", cmd_clone, "copy a remote into a new repository")
+    s.add_argument("url")
+    s.add_argument("dest")
+
+    s = add("lock", cmd_lock, "lock a file so only you can commit or push changes to it")
+    s.add_argument("path")
+    s.add_argument("--holder", help="who holds the lock (default $VCM_AUTHOR)")
+    s.add_argument("--ttl", type=int, default=8 * 3600, help="seconds until it expires (default 8h)")
+    s.add_argument("--note", default="")
+    s.add_argument("--remote", help="take the lock on this remote instead of locally")
+    s = add("unlock", cmd_unlock, "release a lock")
+    s.add_argument("path")
+    s.add_argument("--holder")
+    s.add_argument("--force", action="store_true", help="break a lock held by someone else")
+    s.add_argument("--remote")
+    s = add("locks", cmd_locks, "list active locks", True)
+    s.add_argument("--remote")
+
+    pc = sub.add_parser("protect", help="protect branches: change them only via merged PRs")
+    pc = pc.add_subparsers(dest="protect_cmd", required=True)
+    for name in ("add", "remove"):
+        s = pc.add_parser(name)
+        s.set_defaults(fn=cmd_protect)
+        s.add_argument("branch")
+    pc.add_parser("list").set_defaults(fn=cmd_protect)
+    s = add("config", cmd_config, "read or set project settings (required_approvals)")
+    s.add_argument("key")
+    s.add_argument("value", nargs="?")
 
     add("timeline", cmd_timeline, "hardware time machine", True)
 

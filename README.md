@@ -42,18 +42,18 @@ Findings: verified 6, rule_based 8, speculative 3 | severity: critical 2, warnin
 
 | # | Module | Location | Status |
 |---|--------|----------|--------|
-| 1 | Content-addressed object store, snapshots, branches, tags, commit/log/checkout/diff, evidence store | `packages/core` | **Implemented** (local, single-user; no merge, no remotes) |
+| 1 | Content-addressed object store, snapshots, branches, tags, commit/log/checkout/diff, evidence store | `packages/core` | **Implemented**: local history plus **filesystem remotes** (push, pull, clone, fast-forward only), **file locks** with holder and expiry, and protected branches. No merge, by design; S3/HTTP/SSH transports are **Planned** |
 | 2 | Input parsers: node manifests (`*.node.json`), KiCad `.kicad_sch`/`.kicad_pcb`, BOM CSV | `packages/file-parsers` | **Implemented**. Node manifests are the primary format; the board parsers are retained from VCM's origin and still work |
 | 3 | Semantic diff engine | `packages/diff-engine` | **Implemented** for inventory, form factor/slot, placement and connectivity |
 | 4 | Engineering dependency graph | `services/engineering-graph` | **Implemented**, with two interchangeable backends: local SQLite and **Appwrite TablesDB** for a shared fleet-wide store |
 | 5 | Impact analysis | `services/ai-engine` | **Implemented** as a deterministic rule engine over a component catalog. Node rules: power budget under redundancy policy, chassis cooling, PCIe generation and lane budget, driver minimums, power-connector change. LLM provider interface exists with a no-op default; no real LLM provider ships |
 | 6 | Component catalog | `services/ai-engine` | **Implemented**: 86 parts across three layers, user and project overrides, JSON/CSV import, and explicit coverage reporting |
 | 7 | Validation | `services/validation` | **Implemented**: built-in checks plus an optional `kicad-cli` wrapper for the board domain (skipped when absent) |
-| 8 | Release manifests, verification, rollback planner | `packages/workflow` | **Implemented** (JSON/YAML manifest, tamper detection by re-hashing, domain-aware rollback wording) |
+| 8 | Release manifests, verification, rollback planner | `packages/workflow` | **Implemented** (JSON/YAML manifest, tamper detection by re-hashing, domain-aware rollback wording) plus **Ed25519 signatures** checked against a committed `trustdb.json`; signed device passports |
 | 9 | Physical traceability: unit registry, passports, QR | `services/traceability` | **Implemented** with a local JSON registry and a pure-Python QR encoder |
-| 10 | Change review records | `packages/workflow` | **Partial**: local review record (diff, impact, validation, comments, approvals). No merge action, identity or permissions |
+| 10 | Hardware pull requests | `packages/workflow` | **Implemented, fast-forward only**: review record (diff, impact, validation, comments, approvals), configurable required approvals, no self-approval, a **merge** action that fast-forwards the base branch, and protected branches. Identity is verified only through the API (item 12); the CLI trusts `--author`/`--by`. No three-way merge, no required-reviewer lists, no code owners |
 | 11 | Time machine (`timeline`, `explain`) | `packages/workflow` | **Implemented** |
-| 12 | CLI, REST API, dashboard | `packages/vcm-cli`, `services/api` | **Implemented** (no authentication; intended for local/trusted use) |
+| 12 | CLI, REST API, dashboard | `packages/vcm-cli`, `services/api` | **Implemented**. The API **requires a bearer token and refuses to start without one** (`--insecure` to opt out), binds to 127.0.0.1 by default, and takes PR authors, approvers, mergers and lock holders from the token. No roles or per-route permissions: every valid token can do everything, including breaking locks |
 | 13 | Integrations and apps: BMC/Redfish import, `nvidia-smi` ingest, web app, desktop app | `integrations/`, `apps/` | **Planned**: README stubs only |
 
 ## Quickstart
@@ -162,6 +162,48 @@ flatly announcing that nothing ran.
 Every impact report also carries a coverage summary (`Catalog covered 8 of 8 changed components`),
 so a reader can always tell how much of the configuration the rules actually reasoned about.
 
+## Collaboration and trust
+
+VCM is not GitHub and does not try to be: there is no merge, no hosted service, no issues or CI.
+What it has is the part hardware teams actually need: share history, lock instead of merge, review,
+and prove who released what.
+
+```bash
+# share through a remote (a directory: a mounted share, a synced folder)
+vcm remote add origin /mnt/team/gpu-node.vcm
+vcm push                     # fast-forward only; checks remote locks; re-hashes every blob
+vcm clone /mnt/team/gpu-node.vcm ./work
+vcm pull                     # fast-forwards; refuses divergence instead of merging
+
+# lock instead of merging a file nobody can merge
+vcm lock firmware/driver.conf --holder alice --ttl 7200 --remote origin
+vcm unlock firmware/driver.conf --holder alice --remote origin
+
+# review: required approvals, no self-approval, protected branches, fast-forward merge
+vcm config required_approvals 2
+vcm protect add main
+vcm pr open --base main --head feature --title "H100 NVL upgrade" --author bob
+vcm pr approve 1 --by alice
+vcm pr merge 1 --by carol
+
+# authenticity: Ed25519 release and passport signatures, offline
+vcm key gen release-bot --trust      # private key -> ~/.vcm/keys, public key -> trustdb.json
+vcm commit -m "trust release-bot"    # trustdb.json is a normal committed file
+vcm release sign R1.1 --key release-bot
+vcm release verify R1.1 --require-signature
+```
+
+Serve the API with a token (it refuses to start without one, and binds to localhost):
+
+```bash
+VCM_API_TOKENS="alice=<16+ chars>,bob=<16+ chars>" python -m vcm_api --repo /path/to/repo
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:8000/api/whoami
+```
+
+Behind the API the actor on every PR comment, approval, merge and lock is the token's identity, not
+a field the client sends. **The CLI is not authenticated:** `--author`, `--by` and `--holder` are
+self-asserted, so rely on signatures (not CLI names) for authenticity.
+
 ## The component catalog
 
 86 parts in three bundled layers, overridable per user (`~/.vcm/catalog/`) and per project
@@ -191,11 +233,20 @@ human has actually checked it.
   workload is not modelled.
 - The board domain's schematic connectivity is not traced; nets come from PCB pad assignments. The
   sample KiCad files are hand-generated and have not been opened in KiCad.
-- Single-user local repositories: no remotes, merge, locking, authentication or permissions outside
-  the shared graph backend. Revision history is first-parent only.
-- Release verification detects accidental or naive tampering by re-hashing; there are no
-  signatures, so someone who can rewrite both manifest and store can forge a release.
-- The REST API has no authentication and is meant for localhost or trusted networks.
+- Collaboration is deliberately narrower than Git or GitHub. Remotes are filesystem paths only;
+  branches move by fast-forward and **there is no merge**; history is first-parent only. There are
+  no issues, no CI service, no hosted web UI, no forks and no roles or per-route permissions.
+- Locks are advisory and cooperative: the holder name is self-asserted outside the API, and they are
+  enforced only by `vcm commit` and `vcm push` (a remote whose files you edit directly is not
+  protected). Push checks locks held on the *remote*; local locks stop local commits.
+- A signature proves a key holder signed; it does not prove who the key holder is. Trust is exactly
+  the contents of `trustdb.json`, so protect changes to that file (it is an ordinary committed file;
+  there is no key revocation list or expiry). Private keys sit unencrypted (mode 0600) in
+  `~/.vcm/keys`. The bundled Ed25519 is pure Python, correct against the RFC 8032 vectors, but not
+  constant-time or independently audited.
+- Authentication is one static bearer token per identity, read from the environment. There is no
+  TLS (put it behind a reverse proxy off localhost), no rate limiting, no token rotation and no
+  audit log.
 - Integrations, the web app and the desktop app are not implemented.
 
 ## Repository map

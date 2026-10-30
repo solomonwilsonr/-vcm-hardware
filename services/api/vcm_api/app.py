@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from vcm_ai import analyze, to_markdown
 from vcm_core import Repository, VcmError
+from vcm_core.signing import load_trustdb
 from vcm_diff import diff_revisions, render_text
 from vcm_graph import build_graph
 from vcm_trace import (
@@ -29,11 +30,15 @@ from vcm_workflow import (
     explain,
     get_pr,
     list_prs,
+    merge_pr,
     open_pr,
     plan_rollback,
+    sign_release,
     timeline,
     verify_release,
 )
+
+from .auth import PUBLIC, identity_for, tokens_from_env
 
 STATIC = Path(__file__).parent / "static"
 
@@ -54,25 +59,60 @@ class PrIn(BaseModel):
     base: str
     head: str
     title: str
-    author: str = "unknown"
+    author: str | None = None
 
 
 class CommentIn(BaseModel):
-    author: str = "unknown"
+    author: str | None = None
     text: str
 
 
 class ApprovalIn(BaseModel):
-    by: str
+    by: str | None = None
 
 
-def create_app(repo_path: str | None = None) -> FastAPI:
-    """One app serves one repository (``repo_path`` or $VCM_REPO or the current directory)."""
+class SignIn(BaseModel):
+    key: str
+
+
+class LockIn(BaseModel):
+    path: str
+    ttl: int = 8 * 3600
+    note: str = ""
+
+
+def create_app(repo_path: str | None = None, *, tokens: dict[str, str] | None = None,
+               insecure: bool = False) -> FastAPI:
+    """One app serves one repository (``repo_path`` or $VCM_REPO or the current directory).
+
+    Fails closed: with no ``tokens`` (token -> identity; default from the environment) it raises
+    unless ``insecure`` is set. With auth on, every ``/api`` route except health needs a bearer
+    token, and the acting identity is the token's, not anything in the request body.
+    """
     path = repo_path or os.environ.get("VCM_REPO") or "."
+    tokens = tokens_from_env() if tokens is None else tokens
+    if not tokens and not insecure:
+        raise VcmError("refusing to start without authentication: set VCM_API_TOKEN (or "
+                       "VCM_API_TOKENS), or pass insecure=True / --insecure to opt out")
     app = FastAPI(title="VCM Hardware API", version="0.1.0")
 
     def repo() -> Repository:
         return Repository.discover(path)
+
+    def actor(request: Request, claimed: str | None) -> str:
+        """Authenticated identity if auth is on; otherwise the self-asserted name."""
+        return getattr(request.state, "identity", None) or claimed or "unknown"
+
+    @app.middleware("http")
+    async def _auth(request: Request, call_next):
+        request.state.identity = None
+        if tokens and request.url.path.startswith("/api") and request.url.path not in PUBLIC:
+            who = identity_for(request.headers.get("authorization"), tokens)
+            if who is None:
+                return JSONResponse({"detail": "missing or invalid bearer token"}, status_code=401,
+                                    headers={"WWW-Authenticate": "Bearer"})
+            request.state.identity = who
+        return await call_next(request)
 
     @app.exception_handler(VcmError)
     async def _vcm_error(_: Request, exc: VcmError):
@@ -86,6 +126,10 @@ def create_app(repo_path: str | None = None) -> FastAPI:
     @app.get("/api/health")
     def health():
         return {"status": "ok"}
+
+    @app.get("/api/whoami")
+    def whoami(request: Request):
+        return {"identity": request.state.identity, "authenticated": bool(tokens)}
 
     @app.get("/api/repo")
     def repo_info():
@@ -156,8 +200,16 @@ def create_app(repo_path: str | None = None) -> FastAPI:
         return repo().load_record("releases", name)
 
     @app.get("/api/releases/{name}/verify")
-    def release_verify(name: str, worktree: bool = False):
-        return verify_release(repo(), name, worktree=worktree)
+    def release_verify(name: str, worktree: bool = False, require_signature: bool = False):
+        return verify_release(repo(), name, worktree=worktree, require_signature=require_signature)
+
+    @app.post("/api/releases/{name}/signatures", status_code=201)
+    def release_sign(name: str, body: SignIn):
+        return sign_release(repo(), name, body.key)
+
+    @app.get("/api/trust")
+    def trust():
+        return load_trustdb(repo().root)
 
     @app.get("/api/rollback")
     def rollback(target: str, current: str = "HEAD"):
@@ -194,20 +246,40 @@ def create_app(repo_path: str | None = None) -> FastAPI:
         return list_prs(repo())
 
     @app.post("/api/prs", status_code=201)
-    def pr_open(body: PrIn):
-        return open_pr(repo(), body.base, body.head, body.title, body.author)
+    def pr_open(body: PrIn, request: Request):
+        return open_pr(repo(), body.base, body.head, body.title, actor(request, body.author))
 
     @app.get("/api/prs/{pr_id}")
     def pr_get(pr_id: int):
         return get_pr(repo(), pr_id)
 
     @app.post("/api/prs/{pr_id}/comments")
-    def pr_comment(pr_id: int, body: CommentIn):
-        return add_comment(repo(), pr_id, body.author, body.text)
+    def pr_comment(pr_id: int, body: CommentIn, request: Request):
+        return add_comment(repo(), pr_id, actor(request, body.author), body.text)
 
     @app.post("/api/prs/{pr_id}/approvals")
-    def pr_approve(pr_id: int, body: ApprovalIn):
-        return approve(repo(), pr_id, body.by)
+    def pr_approve(pr_id: int, body: ApprovalIn, request: Request):
+        return approve(repo(), pr_id, actor(request, body.by))
+
+    @app.post("/api/prs/{pr_id}/merge")
+    def pr_merge(pr_id: int, request: Request):
+        who = request.state.identity
+        if tokens and not who:  # unreachable behind the middleware; guards against a regression
+            raise HTTPException(401, "authentication required")
+        return merge_pr(repo(), pr_id, who or request.query_params.get("by") or "unknown")
+
+    @app.get("/api/locks")
+    def locks_list():
+        return repo().locks.list()
+
+    @app.post("/api/locks", status_code=201)
+    def lock_acquire(body: LockIn, request: Request):
+        return repo().locks.acquire(body.path, actor(request, request.query_params.get("by")),
+                                    body.ttl, body.note)
+
+    @app.delete("/api/locks")
+    def lock_release(path: str, request: Request, force: bool = False):
+        return repo().locks.release(path, actor(request, request.query_params.get("by")), force)
 
     @app.get("/")
     def dashboard():
@@ -219,5 +291,3 @@ def create_app(repo_path: str | None = None) -> FastAPI:
 
     return app
 
-
-app = create_app()

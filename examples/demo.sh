@@ -75,6 +75,27 @@ vcm timeline
 step "12. Explain the change end to end (first 30 lines)"
 vcm explain v1.0 v1.1 | sed -n '1,30p'
 
+step "11b. Sign the release and verify authenticity (Ed25519, offline)"
+export VCM_KEY_DIR="$WORK/.vcm/demo-keys"
+vcm key gen release-bot --trust
+vcm release sign R1.1 --key release-bot
+vcm release verify R1.1 --require-signature
+# The trust set is a normal file: commit it so everyone who clones shares it.
+vcm commit -m "trust release-bot signing key" --author alice
+
+step "11c. Share through a remote: push, clone elsewhere, verify the clone"
+REMOTE="$WORK/../demo-remote.$$"
+vcm remote add origin "$REMOTE"
+vcm push origin
+vcm clone "$REMOTE" "$WORK/../demo-clone.$$"
+(cd "$WORK/../demo-clone.$$" && vcm release verify R1.1 && vcm log)
+rm -rf "$REMOTE" "$WORK/../demo-clone.$$"
+
+step "11d. Lock a file instead of merging it"
+vcm lock firmware/driver.conf --holder alice --note "driver bump"
+vcm locks
+vcm unlock firmware/driver.conf --holder alice
+
 step "Tamper check: corrupt a pinned blob and re-verify (expected to FAIL)"
 HASH="$(sha256sum firmware/driver.conf | cut -d' ' -f1)"
 BLOB=".vcm/objects/${HASH:0:2}/${HASH:2}"

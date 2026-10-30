@@ -55,6 +55,22 @@ class Repository:
                 return cls(cand)
         raise VcmError("not inside a vcm repository (run `vcm init`)")
 
+    # ---- project config and locks ----------------------------------
+    def config(self) -> dict:
+        f = self.dir / "config.json"
+        return json.loads(f.read_text()) if f.is_file() else {}
+
+    def save_config(self, cfg: dict) -> None:
+        (self.dir / "config.json").write_text(json.dumps(cfg, indent=2, sort_keys=True) + "\n")
+
+    @property
+    def locks(self):
+        from .locks import LockStore  # lazy: locks imports this module
+        return LockStore(self.dir / "locks")
+
+    def protected_branches(self) -> list[str]:
+        return list(self.config().get("protected_branches", []))
+
     # ---- refs ------------------------------------------------------
     def _head_raw(self) -> str:
         return (self.dir / "HEAD").read_text().strip()
@@ -192,19 +208,28 @@ class Repository:
     def commit(self, message: str, author: str | None = None,
                timestamp: str | None = None, allow_empty: bool = False) -> Revision:
         parent = self.head_id()
+        author = author or os.environ.get("VCM_AUTHOR", "unknown")
+        branch = self.current_branch
+        if branch is None:
+            raise VcmError("detached HEAD: create a branch before committing")
+        if branch in self.protected_branches():
+            raise VcmError(f"branch {branch} is protected: change it through a merged pull request")
         artifacts: dict[str, Artifact] = {}
         for rel, full in self.scan().items():
             digest, size = self.store.put_file(full)
             artifacts[rel] = Artifact(rel, categorize(rel), digest, size)
-        if parent and not allow_empty:
-            prev = self.get_revision(parent).artifacts
-            if {k: v.hash for k, v in prev.items()} == {k: v.hash for k, v in artifacts.items()}:
-                raise NothingToCommit("no changes since last revision")
-        branch = self.current_branch
-        if branch is None:
-            raise VcmError("detached HEAD: create a branch before committing")
-        rev = Revision("", [parent] if parent else [], message,
-                       author or os.environ.get("VCM_AUTHOR", "unknown"),
+        prev = self.get_revision(parent).artifacts if parent else {}
+        prev_hashes = {k: v.hash for k, v in prev.items()}
+        new_hashes = {k: v.hash for k, v in artifacts.items()}
+        if parent and not allow_empty and prev_hashes == new_hashes:
+            raise NothingToCommit("no changes since last revision")
+        changed = {p for p in prev_hashes.keys() | new_hashes.keys()
+                   if prev_hashes.get(p) != new_hashes.get(p)}
+        held = self.locks.conflicts(changed, author)
+        if held:
+            from .locks import describe_conflicts
+            raise VcmError("cannot commit, locked by someone else: " + describe_conflicts(held))
+        rev = Revision("", [parent] if parent else [], message, author,
                        timestamp or now_iso(), branch, artifacts)
         rev.id = self.store.put_bytes(canonical_json(rev.body()))
         self._set_ref("heads", branch, rev.id)
@@ -227,16 +252,37 @@ class Repository:
         if not force and any(st.values()):
             raise VcmError("working tree has uncommitted changes (use --force)")
         rev = self.get_revision(spec)
-        current = self.get_revision(self.head_id()).artifacts if self.head_id() else {}
-        for path in set(current) - set(rev.artifacts):
-            (self.root / path).unlink(missing_ok=True)
-        for art in rev.artifacts.values():
-            self.store.copy_to(art.hash, self.root / art.path)
+        self._materialize(rev)
         if (self._ref_path("heads", spec)).is_file():
             (self.dir / "HEAD").write_text(f"ref: refs/heads/{spec}\n")
         else:
             (self.dir / "HEAD").write_text(rev.id + "\n")
         return rev
+
+    def _materialize(self, rev: Revision) -> None:
+        """Make the working tree match ``rev`` (files only in the old HEAD are removed)."""
+        current = self.get_revision(self.head_id()).artifacts if self.head_id() else {}
+        for path in set(current) - set(rev.artifacts):
+            (self.root / path).unlink(missing_ok=True)
+        for art in rev.artifacts.values():
+            self.store.copy_to(art.hash, self.root / art.path)
+
+    def fast_forward(self, branch: str, rev: str) -> Revision:
+        """Move ``branch`` forward to ``rev``. Refuses anything that is not a pure fast-forward;
+        VCM has no merge. If ``branch`` is checked out the working tree is updated too, and must
+        be clean."""
+        target = self.get_revision(rev)
+        p = self._ref_path("heads", branch)
+        old = p.read_text().strip() if p.is_file() else None
+        if old and old != target.id and old not in self.ancestors(target.id):
+            raise VcmError(f"{branch} cannot fast-forward to {target.id[:10]}: histories diverged "
+                           "(VCM has no merge; pick one side)")
+        if branch == self.current_branch:
+            if self.head_id() and any(self.status().values()):
+                raise VcmError("working tree has uncommitted changes")
+            self._materialize(target)
+        self._set_ref("heads", branch, target.id)
+        return target
 
     # ---- artifacts and diff ----------------------------------------
     def read_artifact(self, rev: str | Revision, path: str) -> bytes:

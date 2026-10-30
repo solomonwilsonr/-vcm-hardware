@@ -35,8 +35,16 @@ from vcm_parsers import (
 from vcm_trace import (
     affected_by_component,
     affected_by_revision,
+    define_rack,
+    fleet_query,
+    import_netbox,
     list_devices,
+    list_racks,
     passport,
+    place_device,
+    plan_rollout,
+    rack_power,
+    recall,
     register_device,
     sign_device,
 )
@@ -393,6 +401,122 @@ def cmd_drift(args) -> int:
         if args.attach:
             print(f"  attached as evidence to {rev.id[:10]}; `vcm impact` will cite it")
     return 1 if res["status"] == "drifted" else 0
+
+
+def _criteria(args) -> dict:
+    return {"type_": args.type, "model": args.model, "mpn": args.mpn,
+            "firmware": args.firmware, "rack": args.rack, "release": args.release}
+
+
+def _units_csv(units: list[dict]) -> str:
+    import csv
+    import io
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["serial", "rack", "position", "release", "revision", "components", "firmware"])
+    for u in units:
+        w.writerow([u["serial"], u["rack"] or "", u["position"] or "", u["release"],
+                    u["revision"][:12], " ".join(f"{c['ref']}={c['model']}" for c in u["components"]),
+                    " ".join(f"{k}={v}" for k, v in sorted(u["firmware"].items()))])
+    return buf.getvalue()
+
+
+def cmd_fleet(args) -> int:
+    repo = _repo(args)
+    c = args.fleet_cmd
+    if c == "rack":
+        if args.rack_cmd == "define":
+            r = define_rack(repo, args.name, args.budget, args.cooling, args.site, args.units)
+            print(f"rack {r['name']}: budget {r.get('power_budget_w', 'none')} W")
+        else:
+            for r in list_racks(repo):
+                print(f"{r['name']:16} budget {r.get('power_budget_w', '-')!s:>8} W  "
+                      f"site {r.get('site') or '-'}")
+        return 0
+    if c == "place":
+        place_device(repo, args.serial, args.rack, args.position)
+        print(f"{args.serial} -> rack {args.rack}" + (f" U{args.position}" if args.position else ""))
+        return 0
+    if c in ("query", "recall"):
+        if c == "recall" and not any((args.type, args.model, args.mpn, args.firmware)):
+            raise VcmError("a recall needs --model, --mpn, --type or --firmware")
+        res = recall(repo, **_criteria(args)) if c == "recall" else fleet_query(repo, **_criteria(args))
+        units = res["units"] if c == "recall" else res
+        if args.json:
+            _dump(res)
+        elif args.csv:
+            print(_units_csv(units), end="")
+        else:
+            for u in units:
+                comps = ", ".join(f"{x['ref']}={x['model']}" for x in u["components"][:4])
+                more = len(u["components"]) - 4
+                print(f"{u['serial']:14} rack {u['rack'] or '-':10} release {u['release']:8} "
+                      f"{comps}{f' (+{more})' if more > 0 else ''}")
+            if c == "recall":
+                print(f"{res['count']} unit(s), {res['components']} component(s); by rack: "
+                      + ", ".join(f"{k} {len(v)}" for k, v in sorted(res["by_rack"].items())))
+            else:
+                print(f"{len(units)} unit(s)")
+        return 0
+    if c == "power":
+        res = rack_power(repo, args.upgrade_to, args.release)
+        if args.json:
+            _dump(res)
+        else:
+            for r in res["racks"]:
+                line = (f"{r['rack']:14} {len(r['units']):3} unit(s)  now {r['now_w']:7.0f} W "
+                        f"[{r['now_status']}]")
+                if res["upgrade_to"]:
+                    line += f"  after {r['after_w']:7.0f} W [{r['after_status']}]"
+                print(line + (f"  budget {r['budget_w']:g} W" if r["budget_w"] else ""))
+                if r["unknown"]:
+                    print(f"{'':14} draw unknown for {', '.join(r['unknown'])}")
+            print(res["note"])
+        return 1 if res["over_after"] else 0
+    if c == "rollout":
+        res = plan_rollout(repo, args.to, args.release, args.max_per_rack, args.wave_size,
+                           args.allow_critical)
+        if args.json:
+            _dump(res)
+            return 0
+        for w in res["waves"]:
+            print(f"wave {w['wave']}: " + ", ".join(f"{u['serial']} ({u['rack']})" for u in w["units"]))
+        for b in res["blocked"]:
+            print(f"BLOCKED  {b['serial']}: {'; '.join(b['critical'][:3])}")
+        for d in res["deferred"]:
+            print(f"DEFERRED {d['serial']}: {d['reason']}")
+        print(f"{res['scheduled']} scheduled in {len(res['waves'])} wave(s), "
+              f"{len(res['blocked'])} blocked, {len(res['deferred'])} deferred")
+        return 0
+    # netbox
+    if args.url:
+        import os
+
+        from .netbox_fetch import fetch_all
+        token = os.environ.get(args.token_env, "")
+        if not token:
+            print(f"set the NetBox API token in ${args.token_env}", file=sys.stderr)
+            return 2
+        devices = fetch_all(args.url, "/api/dcim/devices/", token)
+        racks = fetch_all(args.url, "/api/dcim/racks/", token)
+    elif args.devices:
+        devices = json.loads(Path(args.devices).read_text())
+        racks = json.loads(Path(args.racks).read_text()) if args.racks else None
+    else:
+        raise VcmError("give --devices FILE (saved /api/dcim/devices/ JSON) or --url")
+    res = import_netbox(repo, devices, racks, args.budget_field)
+    if args.json:
+        _dump(res)
+    else:
+        print(f"placed {len(res['placed'])} unit(s); racks created {len(res['racks_created'])}, "
+              f"updated {len(res['racks_updated'])}")
+        if res["unmatched_in_netbox"]:
+            print(f"  {len(res['unmatched_in_netbox'])} NetBox device(s) not registered in VCM: "
+                  + ", ".join(d['name'] or d['serial'] for d in res['unmatched_in_netbox'][:10]))
+        if res["not_in_netbox"]:
+            print(f"  {len(res['not_in_netbox'])} VCM unit(s) not found in NetBox: "
+                  + ", ".join(res["not_in_netbox"][:10]))
+    return 0
 
 
 def cmd_audit(args) -> int:
@@ -810,6 +934,60 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--rev", default="HEAD")
     s.add_argument("--attach", action="store_true",
                    help="store the observation as evidence on the revision")
+
+    fl = sub.add_parser("fleet", help="racks, fleet queries, recalls, rack power, rollouts")
+    fl = fl.add_subparsers(dest="fleet_cmd", required=True)
+    rk = fl.add_parser("rack", help="define or list racks").add_subparsers(dest="rack_cmd",
+                                                                          required=True)
+    s = rk.add_parser("define")
+    s.set_defaults(fn=cmd_fleet)
+    s.add_argument("name")
+    s.add_argument("--budget", type=float, help="power budget in W")
+    s.add_argument("--cooling", type=float, help="cooling capacity in W")
+    s.add_argument("--site", default="")
+    s.add_argument("--units", type=int, help="rack height in U")
+    rk.add_parser("list").set_defaults(fn=cmd_fleet)
+    s = fl.add_parser("place", help="record which rack a unit is installed in")
+    s.set_defaults(fn=cmd_fleet)
+    s.add_argument("serial")
+    s.add_argument("--rack", required=True)
+    s.add_argument("--position", type=int)
+    for name, help_ in (("query", "units matching parts, firmware, rack or release"),
+                        ("recall", "every unit carrying a part or firmware, grouped for action")):
+        s = fl.add_parser(name, help=help_)
+        s.set_defaults(fn=cmd_fleet)
+        s.add_argument("--type", help="component type, e.g. gpu, dimm, psu")
+        s.add_argument("--model", help="model substring")
+        s.add_argument("--mpn", help="part-number substring")
+        s.add_argument("--firmware", action="append", metavar="EXPR",
+                       help="e.g. gpu_driver<535.104 or bios=3.4 (repeatable)")
+        s.add_argument("--rack")
+        s.add_argument("--release")
+        s.add_argument("--json", action="store_true")
+        s.add_argument("--csv", action="store_true")
+    s = fl.add_parser("power", help="declared draw per rack, now and after an upgrade")
+    s.set_defaults(fn=cmd_fleet)
+    s.add_argument("--upgrade-to", metavar="REV")
+    s.add_argument("--release", help="only units currently on this release move")
+    s.add_argument("--json", action="store_true")
+    s = fl.add_parser("rollout", help="plan a fleet change in rack-safe waves")
+    s.set_defaults(fn=cmd_fleet)
+    s.add_argument("--to", required=True, metavar="REV")
+    s.add_argument("--release", help="only units currently on this release")
+    s.add_argument("--max-per-rack", type=int, default=1)
+    s.add_argument("--wave-size", type=int, default=10)
+    s.add_argument("--allow-critical", action="store_true",
+                   help="schedule units even when the change has critical findings")
+    s.add_argument("--json", action="store_true")
+    s = fl.add_parser("netbox", help="import rack placement from NetBox")
+    s.set_defaults(fn=cmd_fleet)
+    s.add_argument("--devices", help="saved /api/dcim/devices/ JSON")
+    s.add_argument("--racks", help="saved /api/dcim/racks/ JSON")
+    s.add_argument("--url", help="NetBox base URL (fetches live; explicit network access)")
+    s.add_argument("--token-env", default="NETBOX_TOKEN")
+    s.add_argument("--budget-field", default="power_budget_w",
+                   help="rack custom field holding the power budget in W")
+    s.add_argument("--json", action="store_true")
 
     t = sub.add_parser("token", help="API tokens bound to a user and a role")
     t = t.add_subparsers(dest="token_cmd", required=True)

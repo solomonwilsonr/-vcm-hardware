@@ -10,6 +10,7 @@ from __future__ import annotations
 import hmac
 import os
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
@@ -24,9 +25,14 @@ from vcm_graph import build_graph
 from vcm_trace import (
     affected_by_component,
     affected_by_revision,
+    fleet_query,
     list_devices,
+    list_racks,
     passport,
+    plan_rollout,
     qr_svg,
+    rack_power,
+    recall,
 )
 from vcm_trace import register_device as _register_device
 from vcm_validation import compare_validation, validate_revision
@@ -260,6 +266,38 @@ def create_app(repo_path: str | None = None, insecure: bool | None = None) -> Fa
     def device_qr(serial: str):
         dev = repo().load_record("devices", serial)
         return Response(qr_svg(dev["qr_payload"]), media_type="image/svg+xml")
+
+    @app.get("/api/racks")
+    def racks():
+        return list_racks(repo())
+
+    def _criteria(type: str | None, model: str | None, mpn: str | None,
+                  firmware: list[str] | None, rack: str | None, release: str | None) -> dict:
+        return {"type_": type, "model": model, "mpn": mpn, "firmware": firmware,
+                "rack": rack, "release": release}
+
+    @app.get("/api/fleet/query")
+    def fleet_query_(type: str | None = None, model: str | None = None, mpn: str | None = None,
+                     firmware: Annotated[list[str] | None, Query()] = None, rack: str | None = None,
+                     release: str | None = None):
+        return fleet_query(repo(), **_criteria(type, model, mpn, firmware, rack, release))
+
+    @app.get("/api/fleet/recall")
+    def fleet_recall(type: str | None = None, model: str | None = None, mpn: str | None = None,
+                     firmware: Annotated[list[str] | None, Query()] = None, rack: str | None = None,
+                     release: str | None = None):
+        if not any((type, model, mpn, firmware)):
+            raise HTTPException(422, "a recall needs type, model, mpn or firmware")
+        return recall(repo(), **_criteria(type, model, mpn, firmware, rack, release))
+
+    @app.get("/api/fleet/power")
+    def fleet_power(upgrade_to: str | None = None, release: str | None = None):
+        return rack_power(repo(), upgrade_to, release)
+
+    @app.get("/api/fleet/rollout")
+    def fleet_rollout(to: str, release: str | None = None, max_per_rack: int = 1,
+                      wave_size: int = 10):
+        return plan_rollout(repo(), to, release, max_per_rack, wave_size)
 
     @app.get("/api/prs")
     def prs():

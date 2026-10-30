@@ -32,8 +32,13 @@ jobs:
           python-version: "3.12"
       - name: Install
         run: python -m pip install -e ".[dev]"
-      - name: Run the end-to-end demo (diff, impact, validation, release, devices)
+      - name: Node demo (diff, impact, validation, release, fleet lineage)
         run: bash examples/demo.sh
+      - name: Board demo (the original domain, kept working)
+        run: VCM_DEMO_DIR="${RUNNER_TEMP}/pcb-demo" bash examples/demo-pcb.sh
+      - name: Catalog coverage is reported, not assumed
+        working-directory: demo-workspace
+        run: vcm catalog coverage --rev v1.1 --json
       - name: Validate sample BOMs
         run: |
           vcm bom validate examples/sample-pcb/v1.0/bom/bom_v1.0.csv

@@ -1,176 +1,220 @@
-# VCM Hardware
+# VCM — Version Control for Hardware
 
-**Every hardware revision has a story. VCM makes it traceable.**
+**Every hardware change has a blast radius. VCM makes it traceable.**
 
-VCM ("Version Control for Hardware") is an engineering-aware version-control and intelligence layer that sits above Git
-(or runs standalone) for hardware projects. It is built around three questions:
+VCM is an engineering-aware version-control and intelligence layer for **datacenter node and rack
+hardware**. You commit a node's configuration the way you commit code; VCM tells you what a change
+to it breaks, which physical units are affected, and how much to trust each thing it says.
 
-1. **What exactly changed in this revision?** A semantic diff of BOM, PCB footprints, placement and net connectivity, not just changed bytes.
-2. **What else could that change affect, and what evidence supports it?** A dependency graph plus an offline impact report whose findings are labelled `verified`, `rule_based` or `speculative`, each with evidence links.
-3. **Which physical devices were built from the affected configuration?** Releases pin artifact hashes; devices are registered against releases and can be looked up by component or revision.
+It is built around three questions:
 
-> **Status: working MVP, honest scope.** PCB (KiCad) and BOM first. Everything marked *Implemented* below runs and is covered by tests in this repository. Everything marked *Planned* does not exist yet. See [Limitations](#limitations).
+1. **What exactly changed in this configuration?** A semantic diff of the node inventory —
+   accelerators, CPUs, memory, NICs, power supplies, slots and the domains they share — not changed
+   bytes in a manifest.
+2. **What else could that change affect, and what evidence supports it?** A dependency graph plus an
+   offline impact report whose findings are labelled `verified`, `rule_based` or `speculative`, each
+   with evidence links back to a file and hash.
+3. **Which physical units were built from the affected configuration?** Releases pin artifact
+   hashes; nodes are registered against releases and can be looked up by component or revision.
+
+> **Status: working MVP, honest scope.** Everything marked *Implemented* below runs and is covered
+> by tests in this repository. Everything marked *Planned* does not exist yet. See
+> [Limitations](#limitations).
+
+## The demo in one paragraph
+
+A node runs eight A100 PCIe accelerators on four 2000 W supplies in a 2+2 redundant bank. Someone
+proposes swapping them for H100 NVL. The manifest diff is eight replaced line items. What VCM says
+is that the node now draws **4190 W against a 4000 W usable budget**, so losing one supply drops it;
+that the **installed driver (470.223.02) is below the H100's minimum (525.60.13)**, so the cards
+will not initialise at all; that the chassis is rated for 3600 W of cooling; that the Gen5 cards sit
+on a Gen4 host root; that both PCIe roots are lane-oversubscribed; and that the power connector
+changed from 8-pin EPS to 12VHPWR, so the existing harness does not fit.
+
+None of that is written down anywhere. It falls out of the graph plus a component catalog.
+
+```
+$ vcm impact v1.0 v1.1
+Findings: verified 6, rule_based 8, speculative 3 | severity: critical 2, warning 9, info 12
+```
 
 ## Modules: implemented vs planned
 
 | # | Module | Location | Status |
 |---|--------|----------|--------|
 | 1 | Content-addressed object store, snapshots, branches, tags, commit/log/checkout/diff, evidence store | `packages/core` | **Implemented** (local, single-user; no merge, no remotes) |
-| 2 | File parsers: KiCad `.kicad_sch` / `.kicad_pcb` (own S-expression parser), BOM CSV | `packages/file-parsers` | **Implemented** for KiCad 6-9 style files and BOM CSV. Schematic wires are not traced: net connectivity comes from PCB pad assignments. No Altium/Eagle/other formats |
-| 3 | Semantic diff engine | `packages/diff-engine` | **Implemented** for BOM, footprints, placement, nets. No mechanical, FPGA or firmware-source semantic diff |
-| 4 | Engineering dependency graph | `services/engineering-graph` | **Implemented** in SQLite. PostgreSQL is the intended production backend (not built) |
-| 5 | Impact analysis ("AI engine") | `services/ai-engine` | **Implemented** as a deterministic rule engine over a small JSON component DB. LLM provider interface exists with a no-op default; no real LLM provider ships |
-| 6 | Validation | `services/validation` | **Implemented**: built-in checks plus an optional `kicad-cli` DRC/ERC wrapper (skipped when `kicad-cli` is absent; the wrapper has not been exercised against a real KiCad install here) |
-| 7 | Release manifests, verification, rollback planner | `packages/workflow` | **Implemented** (JSON/YAML manifest, tamper detection by re-hashing) |
-| 8 | Physical traceability: device registry, passports, QR | `services/traceability` | **Implemented** with a local JSON registry and a pure-Python QR encoder (byte mode, level M, versions 1-10) |
-| 9 | Hardware pull requests | `packages/workflow` | **Partial**: local review record (diff, impact, validation, comments, approvals). No merge action, identity or permissions |
-| 10 | Hardware Time Machine (`timeline`, `explain`) | `packages/workflow` | **Implemented** |
-| 11 | CLI, REST API, static dashboard | `packages/vcm-cli`, `services/api` | **Implemented** (no authentication; intended for local/trusted use) |
-| 12 | Integrations and apps: KiCad plugin, FreeCAD, Git bridge, web app, desktop app | `integrations/`, `apps/` | **Planned**: README stubs only |
-| - | GPU Git for GPUOS / VACE | [`docs/gpu-git.md`](docs/gpu-git.md) | **Planned**: scope document only, nothing implemented |
-
-## Architecture
-
-```mermaid
-flowchart TD
-    subgraph Inputs
-      KiCad[".kicad_sch / .kicad_pcb"] --- BOM["BOM CSV"] --- FW["firmware, docs, vcm.json"]
-    end
-    Inputs --> Core["core: object store + snapshots (.vcm/)"]
-    Core --> Parsers["file-parsers: Design model"]
-    Parsers --> Diff["diff-engine: semantic diff"]
-    Parsers --> Graph["engineering-graph (SQLite)"]
-    Parsers --> Val["validation + evidence"]
-    Diff --> AI["ai-engine: impact report<br/>verified / rule_based / speculative"]
-    Graph --> AI
-    Val --> AI
-    Core --> Rel["workflow: releases, rollback, PRs, timeline"]
-    AI --> Rel
-    Rel --> Trace["traceability: devices, passports, QR"]
-    Rel --> CLI["vcm CLI"]
-    Trace --> CLI
-    Rel --> API["FastAPI + dashboard"]
-    Trace --> API
-```
-
-```
- files ──► core (sha256 objects, revisions) ──► parsers (Design) ──┬─► diff ──────┐
-                                                                   ├─► graph ─────┼─► ai-engine ─► report (JSON/MD)
-                                                                   └─► validation ┘        │
- releases ◄── workflow ◄───────────────────────────────────────────────────────────────────┘
-    └──► devices / passports / QR ──► CLI (vcm) and REST API + dashboard
-```
-
-More detail in [`docs/architecture.md`](docs/architecture.md) and [`docs/data-model.md`](docs/data-model.md).
+| 2 | Input parsers: node manifests (`*.node.json`), KiCad `.kicad_sch`/`.kicad_pcb`, BOM CSV | `packages/file-parsers` | **Implemented**. Node manifests are the primary format; the board parsers are retained from VCM's origin and still work |
+| 3 | Semantic diff engine | `packages/diff-engine` | **Implemented** for inventory, form factor/slot, placement and connectivity |
+| 4 | Engineering dependency graph | `services/engineering-graph` | **Implemented**, with two interchangeable backends: local SQLite and **Appwrite TablesDB** for a shared fleet-wide store |
+| 5 | Impact analysis | `services/ai-engine` | **Implemented** as a deterministic rule engine over a component catalog. Node rules: power budget under redundancy policy, chassis cooling, PCIe generation and lane budget, driver minimums, power-connector change. LLM provider interface exists with a no-op default; no real LLM provider ships |
+| 6 | Component catalog | `services/ai-engine` | **Implemented**: 86 parts across three layers, user and project overrides, JSON/CSV import, and explicit coverage reporting |
+| 7 | Validation | `services/validation` | **Implemented**: built-in checks plus an optional `kicad-cli` wrapper for the board domain (skipped when absent) |
+| 8 | Release manifests, verification, rollback planner | `packages/workflow` | **Implemented** (JSON/YAML manifest, tamper detection by re-hashing, domain-aware rollback wording) |
+| 9 | Physical traceability: unit registry, passports, QR | `services/traceability` | **Implemented** with a local JSON registry and a pure-Python QR encoder |
+| 10 | Change review records | `packages/workflow` | **Partial**: local review record (diff, impact, validation, comments, approvals). No merge action, identity or permissions |
+| 11 | Time machine (`timeline`, `explain`) | `packages/workflow` | **Implemented** |
+| 12 | CLI, REST API, dashboard | `packages/vcm-cli`, `services/api` | **Implemented** (no authentication; intended for local/trusted use) |
+| 13 | Integrations and apps: BMC/Redfish import, `nvidia-smi` ingest, web app, desktop app | `integrations/`, `apps/` | **Planned**: README stubs only |
 
 ## Quickstart
 
-Requires Python 3.11+. The core has no third-party dependencies; the API and tests need FastAPI and httpx.
+Requires Python 3.11+. The core has no third-party dependencies; the API needs FastAPI, the shared
+graph backend needs the Appwrite SDK.
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
 make install          # pip install -e ".[dev]"
 make test             # pytest
-make demo             # end-to-end demo
+make demo             # end-to-end demo on the sample GPU node
 ```
 
-Using the CLI on your own project folder:
+On your own node:
 
 ```bash
 vcm init .
-vcm commit -m "rev A" --tag revA        # snapshot every file, categorised by type
-# ...edit files...
-vcm commit -m "rev B" --tag revB
-vcm diff revA revB                      # semantic diff
-vcm impact revA revB                    # Markdown impact report (use --json for JSON)
-vcm validate --rev revB --compare revA  # built-in checks, stored as evidence
-vcm release create R1 --rev revB        # pin hashes
+vcm commit -m "current config" --tag v1.0     # snapshot every file, categorised by type
+# ...edit the node manifest...
+vcm commit -m "proposed upgrade" --tag v1.1
+vcm diff v1.0 v1.1                            # semantic diff
+vcm impact v1.0 v1.1                          # impact report (--json for JSON)
+vcm catalog coverage --rev v1.1               # what the catalog can actually reason about
+vcm validate --rev v1.1 --compare v1.0
+vcm release create R1 --rev v1.1              # pin hashes
 vcm release verify R1
-vcm device register SN-0001 --release R1 --batch B1   # writes a QR SVG
-vcm device affected --component U1 --value AMS1117-3.3
-vcm rollback plan revA --from revB
-vcm timeline ; vcm explain revA revB
-vcm graph query --component U1
+vcm device register NODE-0001 --release R1 --batch RACK-12
+vcm device affected --component GPU0 --value "NVIDIA A100 PCIe 40GB"
+vcm rollback plan v1.0 --from v1.1
+vcm timeline ; vcm explain v1.0 v1.1
 ```
 
-REST API and dashboard:
+### Node manifests
+
+A node is described by a `*.node.json` file. Components declare what they are and which domains
+they share; everything else you put on a component is carried through and available to rules.
+
+```json
+{
+  "schema": "vcm-node/1",
+  "node": "gpu-node-01",
+  "chassis": {"model": "Supermicro SYS-420GP-TNR", "cooling_w": 3600},
+  "power": {"domains": {"PSU_BANK": {"redundancy": "2+2", "watts_each": 2000,
+                                     "overhead_w": 400}}},
+  "firmware": {"gpu_driver": "535.129.03", "cuda": "12.2"},
+  "components": [
+    {"ref": "GPU0", "type": "gpu", "model": "NVIDIA H100 NVL 94GB",
+     "mpn": "900-21010-0000-000", "slot": "PCIE_SLOT1", "form_factor": "FHFL dual-slot",
+     "tdp_w": 400, "pcie_gen": 5, "pcie_lanes": 16, "power_connector": "12VHPWR (16-pin)",
+     "connections": {"power": "PSU_BANK", "pcie": "CPU0_PCIE_ROOT",
+                     "interconnect": "NVLINK_FABRIC"}}
+  ]
+}
+```
+
+A power domain behaves exactly as a supply rail does on a board, which is why the same graph, diff
+and impact engine serve both. Domains shared by every component (a PSU bank, or ground on a board)
+are deliberately **not** followed when computing blast radius — otherwise every change would report
+the whole node as affected.
+
+## Shared fleet graph on Appwrite TablesDB
+
+A single engineer's history belongs on their disk. A **fleet** does not: "which of our nodes are
+affected by this driver change?" is a question about every node, so the graph has a second backend
+that puts the same two tables in Appwrite TablesDB.
 
 ```bash
-pip install -e ".[api]"
-VCM_REPO=/path/to/project uvicorn vcm_api.app:app
-# dashboard at http://127.0.0.1:8000/   API docs at /docs
+cp .env.example .env     # endpoint, project, API key
+vcm graph health         # check the connection
+vcm graph provision      # create the database, tables, columns and indexes
+vcm graph push --rev v1.1
+vcm graph query --component GPU0 --rev v1.1 --backend appwrite
 ```
 
-To enable project-specific knowledge, commit a `vcm.json` next to your design (see `examples/sample-pcb/v1.1/vcm.json`): rails, firmware links (`configured_by`), tests (`validated_by`) and external loads.
-
-## Demo walkthrough
-
-`examples/demo.sh` commits two revisions of the sample ESP32-C3 sensor node and runs the whole flow. v1.1 swaps the AMS1117-3.3 LDO (SOT-223, 1 A) for an MCP1700-3302E/TT (SOT-23, 250 mA) and changes the output capacitor from 22 uF tantalum to 10 uF ceramic.
-
-1. **Diff**: `U1` and `C2` replaced, both footprints changed, `C2` and `R1` moved. Nets are unchanged.
-2. **Impact** (12 verified, 4 rule-based, 3 speculative findings):
-   - *verified*: the replacements, footprint changes (PCB layout must change), shared nets with 9 components, firmware linked to `U2` through `vcm.json`, tests to re-run.
-   - *rule_based*: `U1` cannot supply the peak load on `+3V3` (about 375 mA peak vs 250 mA rating, critical), junction temperature estimate over limit at peak load, firmware brownout setting to review, pinout consistent.
-   - *speculative*: radio bursts may brown out units, enclosure heating, ripple change from tantalum to ceramic.
-3. **Validation, release, verify**: built-in checks pass on both revisions; two release manifests are written and verified.
-4. **Devices**: three devices are registered (two on R1.0, one on R1.1) with QR SVGs; `device affected --component U1 --value AMS1117-3.3` returns the two older units; `--revision v1.1` returns the newer one.
-5. **Rollback plan** v1.1 to v1.0: not software-reversible, board respin required because the footprints differ.
-6. **Tamper check**: a pinned firmware blob is modified and `release verify` fails as expected.
-
-The numbers come from the small illustrative component DB in `services/ai-engine/vcm_ai/data/components.json`. They demonstrate the mechanism; they are not a substitute for datasheet review.
+Design files stay local; only the graph is shared. Row ids are deterministic hashes, so a re-push
+upserts rather than duplicating; writes are batched into bulk upserts; and a revision's subgraph is
+paged into memory once for traversal, or queried live with `prefetch=False`. The test suite asserts
+that an Appwrite-backed graph returns **byte-identical** results to the local SQLite one.
 
 ## Confidence classes
 
-Every impact finding has exactly one `confidence_class`, plus evidence links (`file` with hash, `ref`, `commit`):
+Every finding has exactly one `confidence_class`, plus evidence links (`file` with hash, `ref`,
+`commit`, `db`, `declared`):
 
-- `verified`: derived from parsed design data, declared project links or stored evidence.
-- `rule_based`: heuristic warning from engineering rules and the component DB.
-- `speculative`: a prediction; not established by data.
+- `verified` — derived from parsed configuration data, declared project links or stored evidence.
+- `rule_based` — a heuristic from engineering rules and the component catalog.
+- `speculative` — a prediction; not established by data.
 
-An optional LLM provider can only add `speculative` findings. The default provider is a no-op and VCM never calls the network by default.
+An optional LLM provider can only ever add `speculative` findings. The default provider is a no-op
+and VCM never calls the network by default.
 
-## Competitor landscape
+**Silence is never safety.** If a changed component is not in the catalog, VCM says so explicitly
+rather than returning a clean-looking report:
 
-The tools below are real and mature in their areas. This table is a high-level orientation from public positioning, not a feature audit; check each vendor for current capabilities.
+> **8 components: NVIDIA B200 SXM 192GB is not in the component catalog** — Affected: GPU0 … GPU7
+> (part 900-74000-0000-000). The catalog has no entry, so VCM skipped driver-minimum, PCIe
+> generation and power-connector checks, all of which read the catalog. Rules fed by values
+> declared in the node manifest (power budget, chassis cooling, PCIe lane counts) did still run for
+> it. Absence of warnings from those checks is absence of knowledge, not evidence of a safe change.
 
-| Tool | What it is good at | Where VCM differs |
-|------|--------------------|-------------------|
-| Altium 365 | Cloud-hosted ECAD collaboration, versioning and review for Altium designs, tight integration with the Altium editor | VCM is open, local-first, KiCad/BOM based, and focuses on cross-artifact impact and device lineage rather than ECAD authoring |
-| Autodesk Fusion (with Fusion Manage / Vault-style data management) | Integrated MCAD + ECAD + PLM in one vendor ecosystem | VCM is vendor-neutral and file-based; it does not do CAD, simulation or PLM workflows |
-| Onshape | Cloud-native MCAD with built-in branching, merging and release management | VCM does not version native CAD models semantically; Onshape is far ahead for mechanical |
-| Git LFS | Stores large binaries next to Git history | Storage only: no parsing, semantic diff, impact or traceability. VCM's store is also content-addressed and large-file friendly but adds the engineering layer |
-| OpenBOM | Cloud BOM management, part catalogs and sourcing | VCM's BOM handling is diff/validation-oriented and local; it has no catalog, sourcing or costing |
-| AllSpice | Git-based collaboration with design-aware diffs for ECAD files | Closest in spirit for review. VCM's intended differentiator is the combination, in one offline tool, of semantic diff, graph-based impact with explicit confidence classes, hash-pinned releases and per-device traceability (passports, QR, affected-device lookup) |
+Note what that message does *not* do: it does not claim more ignorance than there is. Rules driven
+by manifest-declared values keep working on an unknown part, and the disclosure says so rather than
+flatly announcing that nothing ran.
 
-**The integrated differentiator, stated honestly:** none of the individual ideas is unique. VCM's bet is that diff, impact reasoning, validation evidence, release pinning and physical-device lineage should live in one auditable model. Today that model is a small, local MVP: single user, KiCad and BOM only, a deliberately tiny component knowledge base, no hosted collaboration, and no ECAD/MCAD authoring.
+Every impact report also carries a coverage summary (`Catalog covered 8 of 8 changed components`),
+so a reader can always tell how much of the configuration the rules actually reasoned about.
+
+## The component catalog
+
+86 parts in three bundled layers, overridable per user (`~/.vcm/catalog/`) and per project
+(`vcm-catalog/`, committed next to the configuration). Later layers win; lookup is longest-prefix,
+so a specific part number beats a family entry.
+
+```bash
+vcm catalog list --type gpu
+vcm catalog show "NVIDIA H100 NVL 94GB"
+vcm catalog import our-parts.csv --scope project
+```
+
+**No bundled entry has been datasheet-reviewed.** Every part carries `reviewed: false` and a named
+`source`; thermal resistance figures are package-typical estimates, not part data; TDP is a board
+power rating, not measured draw under your workload. Rule findings cite that provenance in their
+evidence, and the coverage finding states it in words. Mark an entry `reviewed: true` only when a
+human has actually checked it.
 
 ## Limitations
 
-- KiCad and BOM CSV only. No Altium, Eagle, OrCAD, STEP/mechanical, FPGA or HDL semantic parsing; those files are stored and categorised but not interpreted.
-- Schematic connectivity (wires, labels, hierarchy) is not traced; nets are read from PCB pad assignments. The sample KiCad files are hand-generated and have not been opened in KiCad.
-- The component property DB has four parts. Rules are heuristics (current headroom, dropout, thermal estimate, output-capacitor ESR, pinout consistency, rating derating) and can be wrong or incomplete.
-- Single-user local repositories: no remotes, merge, locking, authentication or permissions. Revision history is first-parent only.
-- Release verification detects accidental or naive tampering by re-hashing; there are no signatures, so someone who can rewrite both manifest and store can forge a release. Signing is planned.
+- **The catalog is small and unreviewed.** 86 parts, none datasheet-verified by a human. Rules are
+  heuristics and can be wrong or incomplete. VCM discloses what it does not know; it cannot
+  disclose what it has wrong.
+- Node manifests are hand-authored. There is no BMC/Redfish, `nvidia-smi`, `lspci` or `dmidecode`
+  import yet, so the manifest can drift from the machine it describes.
+- Power and thermal rules use declared and catalog figures, not telemetry. Real draw under a real
+  workload is not modelled.
+- The board domain's schematic connectivity is not traced; nets come from PCB pad assignments. The
+  sample KiCad files are hand-generated and have not been opened in KiCad.
+- Single-user local repositories: no remotes, merge, locking, authentication or permissions outside
+  the shared graph backend. Revision history is first-parent only.
+- Release verification detects accidental or naive tampering by re-hashing; there are no
+  signatures, so someone who can rewrite both manifest and store can forge a release.
 - The REST API has no authentication and is meant for localhost or trusted networks.
-- `kicad-cli` integration is untested against a real install in this repository's CI.
-- GPU Git, KiCad/FreeCAD plugins, the web app and the desktop app are not implemented.
+- Integrations, the web app and the desktop app are not implemented.
 
 ## Repository map
 
 ```
 packages/core            object store, snapshots, repository      (vcm_core)
-packages/file-parsers    KiCad S-expression + BOM parsers          (vcm_parsers)
+packages/file-parsers    node manifests, KiCad, BOM                (vcm_parsers)
 packages/diff-engine     semantic hardware diff                    (vcm_diff)
-packages/workflow        releases, rollback, PRs, timeline         (vcm_workflow)
+packages/workflow        releases, rollback, reviews, timeline     (vcm_workflow)
 packages/vcm-cli         `vcm` command                             (vcm_cli)
-services/engineering-graph  SQLite dependency graph                (vcm_graph)
-services/ai-engine       offline impact analysis                   (vcm_ai)
-services/validation      checks, kicad-cli wrapper, evidence       (vcm_validation)
-services/traceability    devices, passports, QR                    (vcm_trace)
-services/api             FastAPI app + static dashboard            (vcm_api)
-examples/                sample KiCad project and demo.sh
-integrations/, apps/     documented placeholders (not implemented)
-docs/                    architecture, data model, roadmap, GPU Git scope
+services/engineering-graph  dependency graph: SQLite + Appwrite    (vcm_graph)
+services/ai-engine       impact rules + component catalog          (vcm_ai)
+services/validation      checks and evidence                       (vcm_validation)
+services/traceability    units, passports, QR                      (vcm_trace)
+services/api             FastAPI app + dashboard                   (vcm_api)
+examples/gpu-node        sample node, v1.0 and v1.1
+examples/demo.sh         end-to-end node demo
+examples/demo-pcb.sh     end-to-end board demo (the original domain)
+docs/                    architecture, data model, roadmap
 ```
 
 Licensed under Apache-2.0. See [CONTRIBUTING.md](CONTRIBUTING.md).

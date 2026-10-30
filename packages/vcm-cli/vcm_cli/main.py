@@ -13,7 +13,8 @@ from vcm_ai.catalog import (
     Catalog,
     read_file,
 )
-from vcm_core import NothingToCommit, Repository, VcmError
+from vcm_core import NothingToCommit, Repository, VcmError, now_iso
+from vcm_core import signing as sg
 from vcm_diff import diff_revisions, render_text
 from vcm_graph import build_graph, project_config
 from vcm_graph.backends.appwrite_backend import health as appwrite_health
@@ -25,6 +26,7 @@ from vcm_trace import (
     list_devices,
     passport,
     register_device,
+    sign_device,
 )
 from vcm_validation import check_bom_text, compare_validation, validate_revision
 from vcm_workflow import (
@@ -40,6 +42,7 @@ from vcm_workflow import (
     render_plan,
     render_pr,
     render_timeline,
+    sign_release,
     timeline,
     verify_release,
 )
@@ -197,15 +200,24 @@ def cmd_release_create(args) -> int:
     return 0
 
 
+def cmd_release_sign(args) -> int:
+    sig = sign_release(_repo(args), args.name, args.key, args.signer)
+    print(f"signed release {args.name} with {sig['key_id']} ({sig['signer']})")
+    return 0
+
+
 def cmd_release_verify(args) -> int:
-    res = verify_release(_repo(args), args.release, worktree=args.worktree)
+    res = verify_release(_repo(args), args.release, worktree=args.worktree,
+                         require_signature=args.require_signature)
     if args.json:
         _dump(res)
     else:
         for c in res["problems"]:
             print(f"FAIL {c['check']}: {c['detail']}")
+        signed = (f"signed ({res['valid_signatures']} valid signature(s))" if res["signed"]
+                  else "UNSIGNED: hashes prove consistency, not who vouched for it")
         print(f"release {res['release']}: {'OK' if res['ok'] else 'VERIFICATION FAILED'} "
-              f"({len(res['checks'])} checks)")
+              f"({len(res['checks'])} checks); {signed}")
     return 0 if res["ok"] else 1
 
 
@@ -219,6 +231,61 @@ def cmd_device_register(args) -> int:
     d = register_device(_repo(args), args.serial, args.release, args.batch, args.notes)
     print(f"registered {d['serial']} (release {d['release']}, revision {d['revision'][:10]})")
     print(f"  QR payload: {d['qr_payload']}\n  QR SVG:     {d['qr_svg']}")
+    return 0
+
+
+def cmd_device_sign(args) -> int:
+    sig = sign_device(_repo(args), args.serial, args.key, args.signer)
+    print(f"signed passport record of {args.serial} with {sig['key_id']} ({sig['signer']})")
+    return 0
+
+
+def cmd_key(args) -> int:
+    if args.key_cmd == "gen":
+        k = sg.generate_key(args.name)
+        print(f"created key {k['name']} ({k['key_id']}) at {k['path']}")
+        print(f"  public key: {k['public_key']}")
+        if args.trust:
+            repo = _repo(args)
+            sg.trust_key(repo.root, k["name"], k["public_key"], now_iso(), args.role)
+            repo.audit.append("key.trust", k["key_id"], {"name": k["name"]})
+            print(f"  trusted in {sg.trust_path(repo.root)} (commit it)")
+        return 0
+    repo = _repo(args)
+    if args.key_cmd == "trust":
+        pub = args.public or sg.public_from_secret(sg.load_secret(args.name))
+        entry = sg.trust_key(repo.root, args.name, pub, now_iso(), args.role)
+        repo.audit.append("key.trust", entry["key_id"], {"name": args.name})
+        print(f"trusted {args.name} ({entry['key_id']}) for {', '.join(entry['roles'])}")
+    elif args.key_cmd == "revoke":
+        sg.revoke_key(repo.root, args.key_id)
+        repo.audit.append("key.revoke", args.key_id)
+        print(f"revoked {args.key_id}; signatures by it no longer verify")
+    else:
+        keys = sg.load_trust(repo.root)["keys"]
+        for kid, e in sorted(keys.items()):
+            print(f"{kid}  {e['name']:16} {','.join(e['roles']):18} added {e['added_at']}")
+        if not keys:
+            print("no trusted keys")
+    return 0
+
+
+def cmd_audit(args) -> int:
+    log = _repo(args).audit
+    if args.audit_cmd == "verify":
+        res = log.verify()
+        if args.json:
+            _dump(res)
+        else:
+            print(f"audit log intact: {res['events']} events, head {res['head'][:16]}" if res["ok"]
+                  else f"AUDIT LOG BROKEN at event {res['broken_at']}: {res['reason']}")
+        return 0 if res["ok"] else 1
+    evs = log.events()[-args.n:] if args.n else log.events()
+    if args.json:
+        _dump(evs)
+        return 0
+    for e in evs:
+        print(f"{e['seq']:5} {e['at']} {e['actor']:12} {e['action']:16} {e['subject']}")
     return 0
 
 
@@ -452,10 +519,17 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--rev", default="HEAD")
     s.add_argument("--out", help="also write the manifest to this .json/.yaml file")
     s.add_argument("--kicad", action="store_true")
+    s = rel.add_parser("sign", help="sign a release manifest with a trusted Ed25519 key")
+    s.set_defaults(fn=cmd_release_sign)
+    s.add_argument("name")
+    s.add_argument("--key", required=True, help="private key name in ~/.vcm/keys")
+    s.add_argument("--signer", help="signer name recorded with the signature (default: key name)")
     s = rel.add_parser("verify")
     s.set_defaults(fn=cmd_release_verify)
     s.add_argument("release", help="release name or manifest file")
     s.add_argument("--worktree", action="store_true")
+    s.add_argument("--require-signature", action="store_true",
+                   help="fail unless a trusted key has signed the release")
     s.add_argument("--json", action="store_true")
 
     rb = sub.add_parser("rollback", help="rollback planning").add_subparsers(dest="rb_cmd", required=True)
@@ -473,6 +547,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--batch", default="")
     s.add_argument("--notes", default="")
     dev.add_parser("list").set_defaults(fn=cmd_device_list)
+    s = dev.add_parser("sign", help="sign a unit's registration record")
+    s.set_defaults(fn=cmd_device_sign)
+    s.add_argument("serial")
+    s.add_argument("--key", required=True)
+    s.add_argument("--signer")
     s = dev.add_parser("passport")
     s.set_defaults(fn=cmd_device_passport)
     s.add_argument("serial")
@@ -510,6 +589,34 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("id", type=int)
 
     add("timeline", cmd_timeline, "hardware time machine", True)
+
+    k = sub.add_parser("key", help="signing keys and the trust database")
+    k = k.add_subparsers(dest="key_cmd", required=True)
+    s = k.add_parser("gen", help="create an Ed25519 signing key in ~/.vcm/keys")
+    s.set_defaults(fn=cmd_key)
+    s.add_argument("name")
+    s.add_argument("--trust", action="store_true", help="also add it to this repo's trustdb.json")
+    s.add_argument("--role", action="append", choices=["release", "passport"],
+                   help="what the key may sign (repeatable; default both)")
+    s = k.add_parser("trust", help="add a public key to trustdb.json")
+    s.set_defaults(fn=cmd_key)
+    s.add_argument("name")
+    s.add_argument("--public", help="hex public key (default: derive from the local key)")
+    s.add_argument("--role", action="append", choices=["release", "passport"])
+    s = k.add_parser("revoke", help="remove a key from trustdb.json")
+    s.set_defaults(fn=cmd_key)
+    s.add_argument("key_id")
+    k.add_parser("list", help="trusted keys").set_defaults(fn=cmd_key)
+
+    au = sub.add_parser("audit", help="hash-chained audit log")
+    au = au.add_subparsers(dest="audit_cmd", required=True)
+    s = au.add_parser("log")
+    s.set_defaults(fn=cmd_audit)
+    s.add_argument("-n", type=int)
+    s.add_argument("--json", action="store_true")
+    s = au.add_parser("verify")
+    s.set_defaults(fn=cmd_audit)
+    s.add_argument("--json", action="store_true")
 
     c = sub.add_parser("catalog", help="component knowledge base behind rule-based findings")
     c = c.add_subparsers(dest="catalog_cmd", required=True)

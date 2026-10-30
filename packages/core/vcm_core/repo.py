@@ -7,6 +7,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .audit import AuditLog
 from .categories import categorize
 from .model import Artifact, Revision, canonical_json
 from .objects import ObjectStore
@@ -34,6 +35,7 @@ class Repository:
         if not self.dir.is_dir():
             raise VcmError(f"not a vcm repository: {self.root}")
         self.store = ObjectStore(self.dir / "objects")
+        self.audit = AuditLog(self.dir)
 
     # ---- lifecycle -------------------------------------------------
     @classmethod
@@ -95,6 +97,7 @@ class Repository:
         if self._ref_path("tags", name).exists():
             raise VcmError(f"tag exists: {name}")
         self._set_ref("tags", name, rid)
+        self.audit.append("tag", name, {"revision": rid})
         return rid
 
     def branch(self, name: str, start: str = "HEAD") -> str:
@@ -102,6 +105,7 @@ class Repository:
             raise VcmError(f"branch exists: {name}")
         rid = self.resolve(start)
         self._set_ref("heads", name, rid)
+        self.audit.append("branch", name, {"revision": rid})
         return rid
 
     # ---- revisions -------------------------------------------------
@@ -208,6 +212,8 @@ class Repository:
                        timestamp or now_iso(), branch, artifacts)
         rev.id = self.store.put_bytes(canonical_json(rev.body()))
         self._set_ref("heads", branch, rev.id)
+        self.audit.append("commit", branch, {"revision": rev.id, "message": message},
+                          actor=rev.author)
         return rev
 
     def status(self) -> dict[str, list[str]]:

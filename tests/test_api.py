@@ -159,3 +159,12 @@ def test_dashboard_surfaces_catalog_coverage(client):
 
 def test_static_mount_rejects_traversal(client):
     assert client.get("/static/../app.py").status_code in (301, 307, 400, 404)
+
+
+def test_dashboard_ships_the_fleet_view(client):
+    page = client.get("/").text
+    assert 'href="#/fleet"' in page
+    js = client.get("/static/app.js").text
+    for endpoint in ("/api/fleet/power", "/api/fleet/rollout", "/api/fleet/query"):
+        assert endpoint in js
+    assert "fleet: fleetView" in js

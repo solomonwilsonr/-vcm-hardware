@@ -287,6 +287,7 @@
     lineage: { ref: null, rev: "HEAD", depth: 2, serial: null },
     releases: { selected: null },
     review: { selected: null },
+    fleet: { upgrade: null },
     ui: {},
     view: null,
   };
@@ -1188,6 +1189,264 @@
     }
   }
 
+  /* ---------------------------------------------------------------- fleet */
+
+  const RACK_TONE = { over: "over", tight: "tight", ok: "ok", "no budget": "nobudget" };
+  const RACK_LABEL = { over: "over budget", tight: "over 90%", ok: "within budget",
+    "no budget": "no budget set" };
+
+  function fleetView(main) {
+    const releases = h("span", {});
+    const powerOut = h("div", {}, loading("Loading racks"));
+    const planOut = h("div", {});
+    const findOut = h("div", {});
+    const summary = h("div", {});
+    const revOpts = revOptions();
+    const upgradeOpts = [{ value: "", label: "no upgrade (now only)" }].concat(revOpts);
+    const relSelect = (id) => select(id, [{ value: "", label: "all units" }], "", null);
+    const num = (id, v) => h("input", { id: id, type: "number", min: 1, value: v, style: "width:6em" });
+    const txt = (id, ph) => h("input", { id: id, type: "text", placeholder: ph, size: 14 });
+
+    mount(main,
+      h("div", { class: "view-head" },
+        h("h1", {}, "Fleet"),
+        h("p", {}, "Every registered unit at once: how much power each rack is provisioned to " +
+          "draw now and after a change, the order in which to roll the change out, and which " +
+          "units carry a given part or firmware. Power here is declared draw from manifests " +
+          "and the component catalog, not measured consumption.")),
+      summary,
+      panel("Rack power", { extra: releases },
+        h("div", { class: "toolbar" },
+          field("Upgrade to", select("fl-up", upgradeOpts, S.fleet.upgrade, null)),
+          field("Only units on release", relSelect("fl-up-rel")),
+          h("button", { class: "primary", type: "button", onclick: loadPower }, "Show")),
+        powerOut),
+      panel("Rollout plan", {},
+        h("div", { class: "toolbar" },
+          field("Move to", select("fl-to", revOpts, S.fleet.upgrade || S.cmp.b, null)),
+          field("Only units on release", relSelect("fl-to-rel")),
+          field("Max per rack per wave", num("fl-mpr", 1)),
+          field("Wave size", num("fl-ws", 10)),
+          h("button", { class: "primary", type: "button", onclick: runRollout }, "Plan rollout")),
+        planOut),
+      panel("Find units", {},
+        h("div", { class: "toolbar" },
+          field("Type", txt("fl-type", "gpu, dimm, psu")),
+          field("Model contains", txt("fl-model", "A100")),
+          field("Part number contains", txt("fl-mpn", "M393A4K40")),
+          field("Firmware", txt("fl-fw", "gpu_driver<535")),
+          field("Rack", txt("fl-rack", "")),
+          h("button", { class: "primary", type: "button", onclick: runFind }, "Find")),
+        findOut));
+    S.ui.fleet = { powerOut, planOut, findOut, summary, releases };
+    initFleet();
+  }
+
+  async function initFleet() {
+    const ui = S.ui.fleet;
+    try {
+      const [rels, devices] = await Promise.all([api("/api/releases"), api("/api/devices")]);
+      S.devices = devices;
+      for (const id of ["fl-up-rel", "fl-to-rel"]) {
+        const sel = byId(id);
+        if (!sel) return;
+        rels.forEach((r) => sel.append(h("option", { value: r.name }, "release " + r.name)));
+      }
+      ui.releases.textContent = "";
+      ui.releases.append(h("span", { class: "count" }, plural(rels.length, "release")));
+    } catch (e) {
+      clear(ui.powerOut).append(errBox(e));
+      return;
+    }
+    await loadPower();
+  }
+
+  function fleetSummary(power) {
+    const placed = S.devices.filter((d) => d.location && d.location.rack).length;
+    const over = power.racks.filter((r) => r.after_status === "over").length;
+    mount(clear(S.ui.fleet.summary), h("div", { class: "stats" },
+      stat(S.devices.length, "units"),
+      stat(power.racks.length, "racks"),
+      stat(placed, "placed in a rack"),
+      stat(S.devices.length - placed, "not placed", S.devices.length - placed ? "bad" : null),
+      stat(over, power.upgrade_to ? "racks over budget after" : "racks over budget",
+        over ? "bad" : "ok")));
+  }
+
+  function wattBars(r, scale, showAfter) {
+    const pct = (w) => Math.max(0, Math.min(100, (w / scale) * 100)) + "%";
+    const bar = (w, cls, label) => h("div", { class: "wbar" },
+      h("span", { class: "wl" }, label),
+      h("span", { class: "wtrack" },
+        h("span", { class: "wfill " + cls, style: "width:" + pct(w) }),
+        r.budget_w ? h("span", { class: "wbudget", style: "left:" + pct(r.budget_w),
+          title: "budget " + r.budget_w + " W" }) : null),
+      h("span", { class: "wv" }, Math.round(w).toLocaleString() + " W"));
+    return h("div", { class: "wbars" },
+      bar(r.now_w, "now " + RACK_TONE[r.now_status], "now"),
+      showAfter ? bar(r.after_w, "after " + RACK_TONE[r.after_status], "after") : null);
+  }
+
+  async function loadPower() {
+    const ui = S.ui.fleet;
+    const up = byId("fl-up").value;
+    const rel = byId("fl-up-rel").value;
+    S.fleet.upgrade = up || null;
+    clear(ui.powerOut).append(loading("Summing declared draw per rack"));
+    try {
+      const q = new URLSearchParams();
+      if (up) q.set("upgrade_to", up);
+      if (rel) q.set("release", rel);
+      const p = await api("/api/fleet/power?" + q);
+      fleetSummary(p);
+      if (!p.racks.length) {
+        clear(ui.powerOut).append(empty("No racks yet. Define one with `vcm fleet rack define " +
+          "NAME --budget W` and place units with `vcm fleet place`, or import placement " +
+          "from NetBox with `vcm fleet netbox`."));
+        return;
+      }
+      const scale = Math.max(1, ...p.racks.map((r) => Math.max(r.budget_w || 0, r.now_w,
+        r.after_w))) * 1.05;
+      const status = up ? "after_status" : "now_status";
+      const rows = p.racks.map((r) => h("div", { class: "rackrow " + RACK_TONE[r[status]] },
+        h("div", { class: "rackname" },
+          h("b", { class: "mono" }, r.rack),
+          h("span", { class: "rstate " + RACK_TONE[r[status]] }, RACK_LABEL[r[status]]),
+          h("span", { class: "dim" }, plural(r.units.length, "unit") +
+            (r.budget_w ? " · budget " + r.budget_w.toLocaleString() + " W" : ""))),
+        wattBars(r, scale, !!up),
+        r.unknown.length ? h("p", { class: "empty" }, "Draw unknown for " +
+          r.unknown.join(", ") + "; excluded from the totals.") : null,
+        refChips(r.units)));
+      const over = p.over_after;
+      mount(clear(ui.powerOut),
+        up && over.length
+          ? h("div", { class: "verdict critical" }, h("div", {},
+              h("div", { class: "vtitle" }, plural(over.length, "rack") + " would exceed " +
+                "the power budget after moving to " + revShort(up)),
+              h("div", { class: "vdetail" }, over.join(", ") + ". " + p.note)))
+          : up ? h("div", { class: "verdict clean" }, h("div", {},
+              h("div", { class: "vtitle" }, "Every rack stays within budget after moving to " +
+                revShort(up)),
+              h("div", { class: "vdetail" }, p.note))) : null,
+        h("div", { class: "racks" }, rows),
+        h("p", { class: "empty" }, "The bar marker is the rack's budget. " + p.note));
+    } catch (e) {
+      clear(ui.powerOut).append(errBox(e));
+    }
+  }
+
+  async function runRollout() {
+    const ui = S.ui.fleet;
+    const q = new URLSearchParams({ to: byId("fl-to").value,
+      max_per_rack: byId("fl-mpr").value || "1", wave_size: byId("fl-ws").value || "10" });
+    const rel = byId("fl-to-rel").value;
+    if (rel) q.set("release", rel);
+    clear(ui.planOut).append(loading("Running impact analysis for each starting revision"));
+    try {
+      const p = await api("/api/fleet/rollout?" + q);
+      const tone = p.blocked.length || p.deferred.length ? "warning" : "clean";
+      const waves = p.waves.map((w) => h("div", { class: "wave" },
+        h("h4", {}, "Wave " + w.wave, h("span", { class: "count" },
+          plural(w.units.length, "unit"))),
+        h("ul", {}, w.units.map((u) => h("li", {},
+          h("b", { class: "mono" }, u.serial), h("span", { class: "dim" }, "  " + u.rack))))));
+      mount(clear(ui.planOut),
+        h("div", { class: "verdict " + tone, style: "margin-top:12px" }, h("div", {},
+          h("div", { class: "vtitle" }, plural(p.scheduled, "unit") + " scheduled in " +
+            plural(p.waves.length, "wave") + " to " + revShort(p.to)),
+          h("div", { class: "vdetail" }, plural(p.blocked.length, "unit") + " held back by " +
+            "critical findings, " + plural(p.deferred.length, "unit") + " deferred because " +
+            "the rack would exceed its power budget. At most " + p.max_per_rack +
+            " per rack per wave."))),
+        waves.length ? h("div", { class: "waves" }, waves) : null,
+        p.blocked.length ? panel("Held back: critical findings", { count: p.blocked.length },
+          h("ul", { class: "held" }, p.blocked.map((b) => h("li", {},
+            h("b", { class: "mono" }, b.serial),
+            h("span", { class: "dim" }, "  from " + revShort(b.from)),
+            h("ul", {}, b.critical.map((c) => h("li", {}, schip("critical"), " ", c))))))) : null,
+        p.deferred.length ? panel("Deferred: rack power", { count: p.deferred.length },
+          h("ul", { class: "held" }, p.deferred.map((d) => h("li", {},
+            h("b", { class: "mono" }, d.serial), h("span", { class: "dim" }, "  " + d.rack +
+              ": " + d.reason))))) : null,
+        !p.waves.length && !p.blocked.length && !p.deferred.length
+          ? empty("Every unit in scope is already at " + revShort(p.to) + ".") : null);
+    } catch (e) {
+      clear(ui.planOut).append(errBox(e));
+    }
+  }
+
+  /* Eight identical accelerators read as one line, not eight chips. */
+  function groupByModel(components) {
+    const groups = new Map();
+    components.forEach((c) => {
+      const k = c.model || c.mpn || c.ref;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(c.ref);
+    });
+    return [...groups.entries()];
+  }
+
+  function unitsCsv(units) {
+    const esc = (v) => '"' + String(v === null || v === undefined ? "" : v).replace(/"/g, '""') + '"';
+    const lines = [["serial", "rack", "position", "release", "revision", "components", "firmware"]
+      .join(",")];
+    units.forEach((u) => lines.push([u.serial, u.rack, u.position, u.release,
+      shortHash(u.revision, 12), u.components.map((c) => c.ref + "=" + c.model).join(" "),
+      Object.entries(u.firmware || {}).map(([k, v]) => k + "=" + v).join(" ")].map(esc).join(",")));
+    return lines.join("\n") + "\n";
+  }
+
+  async function runFind() {
+    const ui = S.ui.fleet;
+    const q = new URLSearchParams();
+    const map = { type: "fl-type", model: "fl-model", mpn: "fl-mpn", rack: "fl-rack" };
+    for (const [k, id] of Object.entries(map)) {
+      const v = byId(id).value.trim();
+      if (v) q.set(k, v);
+    }
+    byId("fl-fw").value.split(/[;,]/).map((x) => x.trim()).filter(Boolean)
+      .forEach((f) => q.append("firmware", f));
+    clear(ui.findOut).append(loading("Searching every registered unit"));
+    try {
+      const units = await api("/api/fleet/query?" + q);
+      const byRack = {};
+      units.forEach((u) => { const k = u.rack || "(not placed)"; byRack[k] = (byRack[k] || 0) + 1; });
+      const comps = units.reduce((n, u) => n + u.components.length, 0);
+      const download = h("button", { class: "ghost", type: "button", onclick: () => {
+        const a = h("a", { href: URL.createObjectURL(new Blob([unitsCsv(units)],
+          { type: "text/csv" })), download: "vcm-units.csv" });
+        document.body.append(a); a.click(); a.remove();
+      } }, "Download CSV");
+      mount(clear(ui.findOut),
+        h("div", { class: "stats", style: "margin-top:12px" },
+          stat(units.length, "units"), stat(comps, "matching components"),
+          stat(Object.keys(byRack).length, "racks"),
+          h("div", { class: "stat" }, h("div", { class: "n txt" },
+            Object.entries(byRack).map(([k, v]) => k + " " + v).join(" · ") || "—"),
+            h("div", { class: "l" }, "by rack"))),
+        units.length ? h("div", { class: "toolbar", style: "justify-content:flex-end" }, download)
+          : null,
+        units.length ? table(["Serial", "Rack", "Release", "Matching components", "Firmware"],
+          units.map((u) => h("tr", {},
+            h("td", { class: "m" }, u.serial),
+            h("td", {}, (u.rack || "—") + (u.position ? " · U" + u.position : "")),
+            h("td", {}, u.release, h("div", { class: "dim m" }, revShort(u.revision))),
+            h("td", {}, u.components.length
+              ? h("div", { class: "refs" }, groupByModel(u.components).map(([model, refs]) =>
+                  h("span", { class: "ref", title: refs.join(", ") },
+                    (refs.length > 1 ? refs.length + "× " : refs[0] + " ") + model)))
+              : h("span", { class: "dim" }, "(no component filter)")),
+            h("td", { class: "m" }, Object.entries(u.firmware || {}).map(([k, v]) =>
+              h("div", {}, k + " " + v))))))
+          : empty("No unit matches. Model and part number match as case-insensitive " +
+            "substrings; firmware takes comparisons such as gpu_driver<535 (several separated " +
+            "by commas)."));
+    } catch (e) {
+      clear(ui.findOut).append(errBox(e));
+    }
+  }
+
   /* --------------------------------------------------------------- router */
 
   const VIEWS = {
@@ -1195,6 +1454,7 @@
     lineage: lineageView,
     releases: releasesView,
     review: reviewView,
+    fleet: fleetView,
     history: historyView,
   };
 

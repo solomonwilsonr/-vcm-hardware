@@ -19,6 +19,7 @@ from vcm_ai.catalog import (
 )
 from vcm_ai.rules_datacenter import node_meta
 from vcm_core import NothingToCommit, Repository, VcmError, now_iso
+from vcm_core import remote as rm
 from vcm_core import signing as sg
 from vcm_core.tokens import ROLES, TokenStore
 from vcm_diff import compare_drift, diff_revisions, render_text
@@ -98,6 +99,20 @@ def cmd_init(args) -> int:
 
 def cmd_commit(args) -> int:
     repo = _repo(args)
+    if not args.ignore_locks and repo.head_id():
+        st = repo.status()
+        touched = st["added"] + st["removed"] + st["modified"]
+        for name in rm.remotes(repo):
+            remote = rm.Remote.of(repo, name)
+            blocked = rm.blocking_locks(remote, touched, args.author or rm.identity())
+            if blocked:
+                for b in blocked:
+                    print(f"{b['path']} is locked on {name} by {b['holder']} until "
+                          f"{b['expires_at']}" + (f": {b['reason']}" if b.get("reason") else ""),
+                          file=sys.stderr)
+                print("commit refused; ask the holder, or --ignore-locks to commit locally "
+                      "(the push will still be refused)", file=sys.stderr)
+                return 1
     try:
         rev = repo.commit(args.message, author=args.author)
     except NothingToCommit as e:
@@ -519,6 +534,77 @@ def cmd_fleet(args) -> int:
     return 0
 
 
+def cmd_remote(args) -> int:
+    repo = _repo(args)
+    if args.remote_cmd == "add":
+        cfg = rm.add_remote(repo, args.name, args.url)
+        print(f"remote {args.name} -> {cfg['url']}")
+    else:
+        for name, cfg in sorted(rm.remotes(repo).items()):
+            print(f"{name}\t{cfg['url']}")
+    return 0
+
+
+def _conflicts(res: dict) -> None:
+    for t in res.get("tag_conflicts", []):
+        print(f"  CONFLICT tag {t}: differs between local and remote; left unchanged")
+    for r in res.get("record_conflicts", []):
+        print(f"  CONFLICT {r}: differs between local and remote; left unchanged")
+
+
+def cmd_push(args) -> int:
+    res = rm.push(_repo(args), args.remote, args.branch)
+    if res["up_to_date"]:
+        print(f"{res['remote']}/{res['branch']} already up to date")
+    else:
+        print(f"pushed {res['branch']} to {res['remote']}: "
+              f"{(res['from'] or 'new')[:10]} -> {res['to'][:10]}, {res['objects']} object(s), "
+              f"{len(res['tags'])} tag(s), {len(res['records'])} record(s)")
+    _conflicts(res)
+    return 0
+
+
+def cmd_pull(args) -> int:
+    repo = _repo(args)
+    if args.cmd == "fetch":
+        res = rm.fetch(repo, args.remote)
+        print(f"fetched {res['objects']} object(s), {len(res['tags'])} tag(s), "
+              f"{len(res['records'])} record(s) from {args.remote}")
+    else:
+        res = rm.pull(repo, args.remote, args.branch)
+        if res["fast_forward"]:
+            print(f"fast-forwarded {res['branch']}: {(res['before'] or 'none')[:10]} -> "
+                  f"{res['after'][:10]}")
+        else:
+            print(f"{res['branch']} is up to date with {args.remote}")
+    _conflicts(res)
+    return 0
+
+
+def cmd_lock(args) -> int:
+    repo = _repo(args)
+    remote = rm.Remote.of(repo, args.remote)
+    if args.lock_cmd == "acquire":
+        lock = rm.acquire_lock(remote, args.path, args.ttl, args.reason)
+        repo.audit.append("lock.acquire", args.path, {"remote": args.remote,
+                                                     "expires_at": lock["expires_at"]})
+        print(f"locked {args.path} for {lock['holder']} until {lock['expires_at']}")
+    elif args.lock_cmd == "release":
+        lock = rm.release_lock(remote, args.path, force=args.force)
+        repo.audit.append("lock.release" + (".forced" if args.force else ""), args.path,
+                          {"remote": args.remote, "holder": lock["holder"]})
+        print(f"released {args.path} (was held by {lock['holder']})")
+    else:
+        locks = rm.list_locks(remote)
+        for lk in locks:
+            state = "expired" if lk["expired"] else "until " + lk["expires_at"]
+            print(f"{lk['path']:40} {lk['holder']:14} {state}"
+                  + (f"  {lk['reason']}" if lk.get("reason") else ""))
+        if not locks:
+            print("no locks")
+    return 0
+
+
 def cmd_audit(args) -> int:
     log = _repo(args).audit
     if args.audit_cmd == "verify":
@@ -770,6 +856,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-m", "--message", required=True)
     s.add_argument("--author")
     s.add_argument("--tag")
+    s.add_argument("--ignore-locks", action="store_true",
+                   help="commit even if a remote lock is held by someone else")
     add("status", cmd_status, "working tree changes", True)
     s = add("log", cmd_log, "revision history", True)
     s.add_argument("-n", type=int)
@@ -988,6 +1076,35 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--budget-field", default="power_budget_w",
                    help="rack custom field holding the power budget in W")
     s.add_argument("--json", action="store_true")
+
+    r = sub.add_parser("remote", help="shared remotes (a directory on a shared mount)")
+    r = r.add_subparsers(dest="remote_cmd", required=True)
+    s = r.add_parser("add")
+    s.set_defaults(fn=cmd_remote)
+    s.add_argument("name")
+    s.add_argument("url", help="path or file:// URL of the shared directory")
+    r.add_parser("list").set_defaults(fn=cmd_remote)
+    s = add("push", cmd_push, "send revisions, tags and records to a remote (fast-forward only)")
+    s.add_argument("remote", nargs="?", default="origin")
+    s.add_argument("--branch")
+    s = add("fetch", cmd_pull, "download revisions, tags and records from a remote")
+    s.add_argument("remote", nargs="?", default="origin")
+    s = add("pull", cmd_pull, "fetch and fast-forward the current branch")
+    s.add_argument("remote", nargs="?", default="origin")
+    s.add_argument("--branch")
+    lk = sub.add_parser("lock", help="lock files on a remote instead of merging them")
+    lk = lk.add_subparsers(dest="lock_cmd", required=True)
+    for name in ("acquire", "release", "list"):
+        s = lk.add_parser(name)
+        s.set_defaults(fn=cmd_lock)
+        s.add_argument("--remote", default="origin")
+        if name != "list":
+            s.add_argument("path", help="repository-relative file path")
+        if name == "acquire":
+            s.add_argument("--ttl", type=float, default=8.0, help="hours (default 8)")
+            s.add_argument("--reason", default="")
+        if name == "release":
+            s.add_argument("--force", action="store_true", help="break someone else's lock")
 
     t = sub.add_parser("token", help="API tokens bound to a user and a role")
     t = t.add_subparsers(dest="token_cmd", required=True)

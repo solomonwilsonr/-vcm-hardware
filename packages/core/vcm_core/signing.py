@@ -7,6 +7,8 @@ trust set is itself version-controlled and verification needs no network.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -37,15 +39,46 @@ def _key_path(name: str) -> Path:
     return key_dir() / f"{name}.key"
 
 
-def generate_key(name: str) -> dict:
-    """Create ``name`` in the local key store (mode 0600); returns the public half."""
+def _passphrase(given: str | None) -> str | None:
+    return given or os.environ.get("VCM_KEY_PASSPHRASE") or None
+
+
+def _kdf(passphrase: str, salt: bytes) -> tuple[bytes, bytes]:
+    raw = hashlib.scrypt(passphrase.encode(), salt=salt, n=2**15, r=8, p=1, maxmem=2**26, dklen=64)
+    return raw[:32], raw[32:]
+
+
+def _seal(seed: bytes, passphrase: str) -> dict:
+    """scrypt-derived keys; one-block HMAC-SHA256 keystream; encrypt-then-MAC. A wrong passphrase
+    or a modified file is rejected before any key material is returned."""
+    salt, nonce = os.urandom(16), os.urandom(16)
+    enc, mac = _kdf(passphrase, salt)
+    ct = bytes(a ^ b for a, b in zip(seed, hmac.new(enc, nonce, hashlib.sha256).digest(), strict=True))
+    tag = hmac.new(mac, salt + nonce + ct, hashlib.sha256).hexdigest()
+    return {"kdf": "scrypt-n32768-r8-p1", "salt": salt.hex(), "nonce": nonce.hex(),
+            "ciphertext": ct.hex(), "mac": tag}
+
+
+def _unseal(box: dict, passphrase: str) -> bytes:
+    salt, nonce, ct = (bytes.fromhex(box[k]) for k in ("salt", "nonce", "ciphertext"))
+    enc, mac = _kdf(passphrase, salt)
+    if not hmac.compare_digest(hmac.new(mac, salt + nonce + ct, hashlib.sha256).hexdigest(), box["mac"]):
+        raise VcmError("wrong passphrase, or the key file was modified")
+    return bytes(a ^ b for a, b in zip(ct, hmac.new(enc, nonce, hashlib.sha256).digest(), strict=True))
+
+
+def generate_key(name: str, passphrase: str | None = None) -> dict:
+    """Create ``name`` in the local key store (mode 0600); returns the public half. With a
+    passphrase (argument or $VCM_KEY_PASSPHRASE) the private key is stored encrypted."""
     path = _key_path(name)
     if path.exists():
         raise VcmError(f"key already exists: {name}")
     seed = os.urandom(32)
     pub = ed25519.public_key(seed).hex()
     path.parent.mkdir(parents=True, exist_ok=True)
-    body = {"name": name, "alg": ALG, "public": pub, "secret": seed.hex(), "created_at": now_iso()}
+    body = {"name": name, "alg": ALG, "public": pub, "created_at": now_iso()}
+    pw = _passphrase(passphrase)
+    body.update({"encrypted": _seal(seed, pw)} if pw else {"secret": seed.hex()})
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w") as f:
         f.write(json.dumps(body, indent=2) + "\n")
@@ -59,9 +92,19 @@ def _load_key(name: str) -> dict:
     return json.loads(path.read_text())
 
 
+def _seed(k: dict) -> bytes:
+    if "secret" in k:
+        return bytes.fromhex(k["secret"])
+    pw = _passphrase(None)
+    if not pw:
+        raise VcmError(f"key {k['name']} is encrypted: set VCM_KEY_PASSPHRASE")
+    return _unseal(k["encrypted"], pw)
+
+
 def public_info(name: str) -> dict:
     k = _load_key(name)
-    return {"name": k["name"], "alg": k["alg"], "public": k["public"], "key_id": key_id(k["public"])}
+    return {"name": k["name"], "alg": k["alg"], "public": k["public"], "key_id": key_id(k["public"]),
+            "encrypted": "encrypted" in k}
 
 
 def list_keys() -> list[dict]:
@@ -99,6 +142,18 @@ def trust_key(root: str | Path, name: str, public_hex: str) -> dict:
     return {"key_id": kid, **db["keys"][kid]}
 
 
+def revoke_key(root: str | Path, kid: str, reason: str = "") -> dict:
+    """Keep the key in trustdb.json but mark it revoked. Every signature by it stops counting,
+    including older ones: ``signed_at`` is not signed, so a pre-revocation signature cannot be
+    told from a back-dated one. Re-sign anything that must stay authenticated with a new key."""
+    db = load_trustdb(root)
+    if kid not in db["keys"]:
+        raise VcmError(f"key {kid} is not in the trust set")
+    db["keys"][kid].update(revoked_at=now_iso(), revoked_reason=reason)
+    _save_trustdb(root, db)
+    return db["keys"][kid]
+
+
 def untrust_key(root: str | Path, kid: str) -> None:
     db = load_trustdb(root)
     if kid not in db["keys"]:
@@ -120,7 +175,7 @@ def document_digest(doc: dict) -> str:
 
 def sign_digest(key_name: str, digest: str, purpose: str) -> dict:
     k = _load_key(key_name)
-    sig = ed25519.sign(bytes.fromhex(k["secret"]), _message(purpose, digest))
+    sig = ed25519.sign(_seed(k), _message(purpose, digest))
     return {"alg": ALG, "key_id": key_id(k["public"]), "name": k["name"], "public": k["public"],
             "signature": sig.hex(), "signed_at": now_iso()}
 
@@ -146,6 +201,9 @@ def verify_signature(sig: dict, digest: str, purpose: str, root: str | Path) -> 
         out["detail"] = "signature does not match the signed digest"
         return out
     entry = load_trustdb(root)["keys"].get(out["key_id"])
+    if entry and entry["public"] == sig["public"] and entry.get("revoked_at"):
+        out["detail"] = f"valid, but the key was revoked at {entry['revoked_at']}"
+        return out
     out["trusted"] = bool(entry) and entry["public"] == sig["public"]
     out["detail"] = "" if out["trusted"] else "valid, but the key is not in trustdb.json"
     return out

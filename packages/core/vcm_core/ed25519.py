@@ -1,12 +1,20 @@
 """Pure-Python Ed25519 (RFC 8032, section 6), so the core keeps its zero-dependency rule.
 
-Slow by cryptographic-library standards (tens of milliseconds per operation) and not hardened
-against timing side channels. That is acceptable for signing release manifests offline; do not
-reuse it for anything latency-sensitive or exposed to an attacker who can time it.
+Slow (tens of milliseconds per operation) and not hardened against timing side channels. When the
+optional ``cryptography`` package is installed it is used instead (see ``backend()``); the two
+are tested against each other. Do not use the pure fallback where an attacker can time it.
 """
 from __future__ import annotations
 
 import hashlib
+import os
+
+try:  # optional: a constant-time, audited implementation. The pure-Python code below is the fallback.
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives.asymmetric import ed25519 as _lib
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+except ImportError:  # pragma: no cover - exercised when cryptography is absent
+    _lib = None
 
 P = 2**255 - 19
 Q = 2**252 + 27742317777372353535851937790883648493
@@ -87,12 +95,12 @@ def _expand(seed: bytes) -> tuple[int, bytes]:
     return a, h[32:]
 
 
-def public_key(seed: bytes) -> bytes:
+def pure_public_key(seed: bytes) -> bytes:
     a, _ = _expand(seed)
     return _compress(_mul(a, G))
 
 
-def sign(seed: bytes, message: bytes) -> bytes:
+def pure_sign(seed: bytes, message: bytes) -> bytes:
     a, prefix = _expand(seed)
     pub = _compress(_mul(a, G))
     r = _sha512_modq(prefix + message)
@@ -101,7 +109,7 @@ def sign(seed: bytes, message: bytes) -> bytes:
     return r_enc + int.to_bytes((r + h * a) % Q, 32, "little")
 
 
-def verify(pub: bytes, message: bytes, signature: bytes) -> bool:
+def pure_verify(pub: bytes, message: bytes, signature: bytes) -> bool:
     if len(pub) != 32 or len(signature) != 64:
         return False
     a_pt = _decompress(pub)
@@ -114,3 +122,34 @@ def verify(pub: bytes, message: bytes, signature: bytes) -> bool:
         return False
     h = _sha512_modq(r_enc + pub + message)
     return _equal(_mul(s, G), _add(r_pt, _mul(h, a_pt)))
+
+
+def backend() -> str:
+    """``cryptography`` when installed (constant-time), else the pure-Python fallback.
+    Set VCM_PURE_ED25519=1 to force the fallback."""
+    return "cryptography" if _lib is not None and not os.environ.get("VCM_PURE_ED25519") else "pure-python"
+
+
+def public_key(seed: bytes) -> bytes:
+    if backend() == "cryptography":
+        if len(seed) != 32:
+            raise ValueError("ed25519 seed must be 32 bytes")
+        return _lib.Ed25519PrivateKey.from_private_bytes(seed).public_key().public_bytes(
+            Encoding.Raw, PublicFormat.Raw)
+    return pure_public_key(seed)
+
+
+def sign(seed: bytes, message: bytes) -> bytes:
+    if backend() == "cryptography":
+        return _lib.Ed25519PrivateKey.from_private_bytes(seed).sign(message)
+    return pure_sign(seed, message)
+
+
+def verify(pub: bytes, message: bytes, signature: bytes) -> bool:
+    if backend() == "cryptography":
+        try:
+            _lib.Ed25519PublicKey.from_public_bytes(pub).verify(signature, message)
+        except (InvalidSignature, ValueError):
+            return False
+        return True
+    return pure_verify(pub, message, signature)

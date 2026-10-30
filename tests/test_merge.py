@@ -1,7 +1,7 @@
 import pytest
 
-from vcm_core import VcmError
-from vcm_workflow import approve, get_pr, merge_pr, open_pr, render_pr
+from vcm_core import VcmError, signing
+from vcm_workflow import approve, approve_signed, get_pr, merge_pr, open_pr, render_pr
 
 
 @pytest.fixture
@@ -82,3 +82,50 @@ def test_fast_forward_refuses_divergence(feature):
     r.commit("main moved", author="alice")
     with pytest.raises(VcmError, match="diverged"):
         r.fast_forward("main", r.branches()["feature"])
+
+
+def test_signed_approvals_bind_identity_to_a_trusted_key(feature, tmp_path, monkeypatch):
+    monkeypatch.setenv("VCM_KEY_DIR", str(tmp_path / "keys"))
+    r = feature
+    r.save_config({"require_signed_approvals": True})
+    pr = open_pr(r, "main", "feature", "x", author="bob")
+    approve(r, pr["id"], "alice")  # a typed name no longer counts
+    st = get_pr(r, pr["id"])["status"]
+    assert st["approvals"] == 0 and "signed" in st["blockers"][0]
+
+    alice = signing.generate_key("alice")
+    with pytest.raises(VcmError, match="not trusted"):
+        approve_signed(r, pr["id"], "alice")
+    signing.trust_key(r.root, "alice", alice["public"])
+    got = approve_signed(r, pr["id"], "alice")
+    assert got["status"]["approvals"] == 1 and got["status"]["ready_for_merge"]
+    assert "alice (signed)" in render_pr(got)
+
+    signing.revoke_key(r.root, alice["key_id"])  # revocation withdraws the approval
+    assert get_pr(r, pr["id"])["status"]["approvals"] == 0
+    with pytest.raises(VcmError, match="not mergeable"):
+        merge_pr(r, pr["id"], "carol")
+
+
+def test_signed_approval_is_bound_to_the_head_it_approved(feature, tmp_path, monkeypatch):
+    monkeypatch.setenv("VCM_KEY_DIR", str(tmp_path / "keys"))
+    r = feature
+    r.save_config({"require_signed_approvals": True})
+    alice = signing.generate_key("alice")
+    signing.trust_key(r.root, "alice", alice["public"])
+    pr = open_pr(r, "main", "feature", "x", author="bob")
+    approve_signed(r, pr["id"], "alice")
+    raw = r.load_record("prs", str(pr["id"]))
+    raw["head"] = raw["base"]  # someone repoints the PR at different content
+    r.save_record("prs", str(pr["id"]), raw)
+    assert get_pr(r, pr["id"])["status"]["approvals"] == 0
+
+
+def test_author_cannot_sign_their_own_approval(feature, tmp_path, monkeypatch):
+    monkeypatch.setenv("VCM_KEY_DIR", str(tmp_path / "keys"))
+    r = feature
+    bob = signing.generate_key("bob")
+    signing.trust_key(r.root, "bob", bob["public"])
+    pr = open_pr(r, "main", "feature", "x", author="bob")
+    with pytest.raises(VcmError, match="own pull request"):
+        approve_signed(r, pr["id"], "bob")

@@ -127,3 +127,55 @@ def test_trust_rejects_bad_keys_and_untrust(sample_repo):
     assert signing.load_trustdb(sample_repo.root)["keys"] == {}
     with pytest.raises(VcmError):
         signing.untrust_key(sample_repo.root, t["key_id"])
+
+
+def test_revoked_key_stops_counting(sample_repo):
+    create_release(sample_repo, "R1", "v1.0")
+    info = signing.generate_key("alice")
+    signing.trust_key(sample_repo.root, "alice", info["public"])
+    sign_release(sample_repo, "R1", "alice")
+    assert verify_release(sample_repo, "R1", require_signature=True)["authenticated"]
+    signing.revoke_key(sample_repo.root, info["key_id"], "laptop stolen")
+    res = verify_release(sample_repo, "R1", require_signature=True)
+    assert not res["ok"] and not res["authenticated"]
+    assert "revoked" in res["problems"][0]["detail"]
+    with pytest.raises(VcmError):
+        signing.revoke_key(sample_repo.root, "0" * 16)
+
+
+def test_encrypted_key_roundtrip_wrong_passphrase_and_tamper(monkeypatch):
+    info = signing.generate_key("sealed", passphrase="correct horse")
+    assert info["encrypted"]
+    raw = (signing.key_dir() / "sealed.key").read_text()
+    assert '"secret"' not in raw and "correct horse" not in raw
+    with pytest.raises(VcmError, match="encrypted"):
+        signing.sign_digest("sealed", "ab" * 32, "release")
+    monkeypatch.setenv("VCM_KEY_PASSPHRASE", "wrong")
+    with pytest.raises(VcmError, match="wrong passphrase"):
+        signing.sign_digest("sealed", "ab" * 32, "release")
+    monkeypatch.setenv("VCM_KEY_PASSPHRASE", "correct horse")
+    sig = signing.sign_digest("sealed", "ab" * 32, "release")
+    assert signing.verify_signature(sig, "ab" * 32, "release", "/nonexistent")["valid"]
+    path = signing.key_dir() / "sealed.key"
+    body = json.loads(path.read_text())
+    body["encrypted"]["ciphertext"] = "00" * 32
+    path.write_text(json.dumps(body))
+    with pytest.raises(VcmError, match="wrong passphrase|modified"):
+        signing.sign_digest("sealed", "ab" * 32, "release")
+
+
+def test_pure_and_library_backends_agree(monkeypatch):
+    if ed25519._lib is None:
+        pytest.skip("cryptography not installed")
+    monkeypatch.delenv("VCM_PURE_ED25519", raising=False)
+    seed = bytes(range(32))
+    assert ed25519.backend() == "cryptography"
+    assert ed25519.public_key(seed) == ed25519.pure_public_key(seed)
+    msg = b"vcm-sig/1:release:abc"
+    assert ed25519.sign(seed, msg) == ed25519.pure_sign(seed, msg)  # Ed25519 is deterministic
+    sig = ed25519.sign(seed, msg)
+    pub = ed25519.public_key(seed)
+    assert ed25519.pure_verify(pub, msg, sig) and ed25519.verify(pub, msg, sig)
+    assert not ed25519.verify(pub, msg + b"x", sig)
+    monkeypatch.setenv("VCM_PURE_ED25519", "1")
+    assert ed25519.backend() == "pure-python" and ed25519.verify(pub, msg, sig)

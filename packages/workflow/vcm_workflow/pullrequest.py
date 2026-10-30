@@ -2,11 +2,26 @@
 from __future__ import annotations
 
 from vcm_ai import analyze
-from vcm_core import Repository, VcmError, now_iso
+from vcm_core import Repository, VcmError, canonical_json, now_iso, sha256_bytes
+from vcm_core.signing import add_signature, sign_digest, verify_signature
 from vcm_diff import diff_revisions
 from vcm_validation import compare_validation, validate_revision
 
 KIND = "prs"
+APPROVAL_PURPOSE = "pr-approval"
+
+
+def approval_digest(pr: dict) -> str:
+    """What an approval vouches for: this PR id, at exactly this base and head."""
+    return sha256_bytes(canonical_json({"pr": pr["id"], "base": pr["base"], "head": pr["head"]}))
+
+
+def _verified(repo: Repository, pr: dict, approval: dict) -> bool:
+    sig = approval.get("signature")
+    if not sig:
+        return False
+    res = verify_signature(sig, approval_digest(pr), APPROVAL_PURPOSE, repo.root)
+    return res["valid"] and res["trusted"]
 
 
 def _next_id(repo: Repository) -> int:
@@ -30,14 +45,19 @@ def get_pr(repo: Repository, pr_id: int) -> dict:
     pr = repo.load_record(KIND, str(pr_id))
     crit = [f["id"] for f in pr["impact"]["findings"] if f["severity"] == "critical"]
     regression = pr["validation"]["regression"]
-    need = max(1, int(repo.config().get("required_approvals", 1)))
-    have = len(pr["approvals"])
+    cfg = repo.config()
+    need = max(1, int(cfg.get("required_approvals", 1)))
+    signed_only = bool(cfg.get("require_signed_approvals"))
+    for a in pr["approvals"]:  # re-checked on every read, so revoking a key withdraws its approvals
+        a["verified"] = _verified(repo, pr, a)
+    counted = [a for a in pr["approvals"] if a["verified"] or not signed_only]
+    have = len(counted)
     blockers = []
     if have < need:
-        blockers.append(f"needs {need - have} more approval(s)")
+        blockers.append(f"needs {need - have} more " + ("signed " if signed_only else "") + "approval(s)")
     if regression:
         blockers.append("validation regression")
-    pr["status"] = {"approvals": have, "required_approvals": need, "critical_findings": crit,
+    pr["status"] = {"approvals": have, "required_approvals": need, "signed_approvals_required": signed_only, "critical_findings": crit,
                     "validation_regression": regression, "blockers": blockers,
                     "ready_for_merge": pr["state"] == "open" and not blockers}
     return pr
@@ -70,6 +90,27 @@ def approve(repo: Repository, pr_id: int, by: str) -> dict:
         if any(a["by"] == by for a in pr["approvals"]):
             return
         pr["approvals"].append({"by": by, "at": now_iso()})
+    return _update(repo, pr_id, fn)
+
+
+def approve_signed(repo: Repository, pr_id: int, key_name: str) -> dict:
+    """Approve with a signature. The approver's identity is the *trusted key's name* from
+    ``trustdb.json``, so it cannot be claimed by typing someone else's name."""
+    pr = repo.load_record(KIND, str(pr_id))
+    sig = sign_digest(key_name, approval_digest(pr), APPROVAL_PURPOSE)
+    check = verify_signature(sig, approval_digest(pr), APPROVAL_PURPOSE, repo.root)
+    if not check["trusted"]:
+        raise VcmError(f"key {key_name} is not trusted for this project ({check['detail']})")
+    who = sig["name"]
+
+    def fn(p):
+        if who == p["author"] and who != "unknown":
+            raise VcmError("an author cannot approve their own pull request")
+        p["approvals"] = [a for a in p["approvals"] if a["by"] != who]
+        approval = {"by": who, "at": now_iso()}
+        add_signature(approval, sig)
+        approval["signature"] = approval.pop("signatures")[0]
+        p["approvals"].append(approval)
     return _update(repo, pr_id, fn)
 
 
@@ -118,7 +159,7 @@ def render_pr(pr: dict) -> str:
          f"  critical findings: {', '.join(s['critical_findings']) or 'none'}",
          f"  validation: {pr['validation']['status']['from']} -> {pr['validation']['status']['to']}"
          f"{' (REGRESSION)' if s['validation_regression'] else ''}",
-         f"  approvals: {', '.join(a['by'] for a in pr['approvals']) or 'none'}"
+         f"  approvals: {', '.join(a['by'] + (' (signed)' if a.get('verified') else '') for a in pr['approvals']) or 'none'}"
          f" (need {s['required_approvals']})",
          f"  ready for merge: {s['ready_for_merge']}"
          + (f"  blocked: {'; '.join(s['blockers'])}" if s["blockers"] else "")]

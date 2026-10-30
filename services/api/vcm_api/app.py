@@ -38,7 +38,7 @@ from vcm_workflow import (
     verify_release,
 )
 
-from .auth import PUBLIC, identity_for, tokens_from_env
+from .auth import PUBLIC, allows, identity_for, normalize_tokens, required_role, tokens_from_env
 
 STATIC = Path(__file__).parent / "static"
 
@@ -87,10 +87,11 @@ def create_app(repo_path: str | None = None, *, tokens: dict[str, str] | None = 
 
     Fails closed: with no ``tokens`` (token -> identity; default from the environment) it raises
     unless ``insecure`` is set. With auth on, every ``/api`` route except health needs a bearer
-    token, and the acting identity is the token's, not anything in the request body.
+    token, and the acting identity is the token's, not anything in the request body. Tokens map to
+    an identity and a role (reader < writer < maintainer); see ``auth.py``.
     """
     path = repo_path or os.environ.get("VCM_REPO") or "."
-    tokens = tokens_from_env() if tokens is None else tokens
+    tokens = tokens_from_env() if tokens is None else normalize_tokens(tokens)
     if not tokens and not insecure:
         raise VcmError("refusing to start without authentication: set VCM_API_TOKEN (or "
                        "VCM_API_TOKENS), or pass insecure=True / --insecure to opt out")
@@ -105,13 +106,17 @@ def create_app(repo_path: str | None = None, *, tokens: dict[str, str] | None = 
 
     @app.middleware("http")
     async def _auth(request: Request, call_next):
-        request.state.identity = None
+        request.state.identity = request.state.role = None
         if tokens and request.url.path.startswith("/api") and request.url.path not in PUBLIC:
-            who = identity_for(request.headers.get("authorization"), tokens)
-            if who is None:
+            found = identity_for(request.headers.get("authorization"), tokens)
+            if found is None:
                 return JSONResponse({"detail": "missing or invalid bearer token"}, status_code=401,
                                     headers={"WWW-Authenticate": "Bearer"})
-            request.state.identity = who
+            request.state.identity, request.state.role = found
+            needed = required_role(request.method, request.url.path, dict(request.query_params))
+            if not allows(request.state.role, needed):
+                return JSONResponse({"detail": f"{request.state.identity} is a "
+                                     f"{request.state.role}; this needs {needed}"}, status_code=403)
         return await call_next(request)
 
     @app.exception_handler(VcmError)
@@ -129,7 +134,8 @@ def create_app(repo_path: str | None = None, *, tokens: dict[str, str] | None = 
 
     @app.get("/api/whoami")
     def whoami(request: Request):
-        return {"identity": request.state.identity, "authenticated": bool(tokens)}
+        return {"identity": request.state.identity, "role": request.state.role,
+                "authenticated": bool(tokens)}
 
     @app.get("/api/repo")
     def repo_info():

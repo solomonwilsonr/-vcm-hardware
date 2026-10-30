@@ -23,7 +23,8 @@ Do not reintroduce PCB vocabulary into user-facing strings.
 
 Current state: a working MVP, ~180 passing tests, Appwrite TablesDB live. The mechanism is built end
 to end; the *knowledge* (catalog) is still demo-grade. *Trust* now has real primitives (Ed25519
-release signatures, API bearer auth) but no roles, revocation or key protection.
+signatures, revocation, optional encrypted keys, API bearer auth with roles, signed PR approvals)
+but no key expiry, audit log or TLS.
 
 ## Commands
 
@@ -137,14 +138,21 @@ rather than claiming none ran.
   `insecure=True`; there is deliberately **no module-level `app`**, so serve with
   `python -m vcm_api` (binds 127.0.0.1) or `uvicorn --factory vcm_api.app:create_app`. In
   insecure mode identities are self-asserted free text again. Behind auth, always take the actor
-  from `actor(request, claimed)` — never from the request body. There are no roles: any valid token
-  may do anything, including `force`-breaking a lock.
+  from `actor(request, claimed)` — never from the request body. Roles (`reader` < `writer` <
+  `maintainer`, `vcm_api/auth.py::required_role`) gate by method and route; new mutating routes
+  default to `writer`, so decide deliberately whether yours needs `maintainer`.
 - **The CLI is not authenticated.** `--author`/`--by`/`--holder` are self-asserted. Only the API
-  binds identity to a token, and only signatures give authenticity.
+  binds identity to a token, and only signatures give authenticity. `vcm pr approve --key` is the
+  verified route: the approval signs (PR id, base, head) and counts only while its key is trusted
+  and unrevoked; `get_pr` re-verifies on every read.
 - Signing: `trustdb.json` (project root, committed) is the trust set; verification reads the
   *working tree* copy. A valid signature from a key not in it is reported as a failed check, not
   silently accepted. Signatures are domain-separated (`release` vs `passport`). Never log or commit
-  anything from `~/.vcm/keys` (override: `$VCM_KEY_DIR`).
+  anything from `~/.vcm/keys` (override: `$VCM_KEY_DIR`). A revoked key invalidates all its
+  signatures, including old ones, because `signed_at` is not covered by the signature. Encrypted
+  keys use a hand-assembled scrypt + HMAC encrypt-then-MAC (stdlib only); do not extend it, replace
+  it with a real AEAD if a dependency becomes acceptable. Ed25519 goes through `ed25519.backend()`
+  (`cryptography` if installed, else pure Python); tests cross-check both.
 - Remote sync (`vcm_core/remote.py`): filesystem transport only. Push validates everything (fast-
   forward, tag conflicts, remote locks) **before** writing, re-hashes every blob it copies, and
   syncs `releases/` and `devices/` as create-only records (release signatures are unioned). PRs,
@@ -163,8 +171,8 @@ engineering.
 | # | Gap | Effort | Status |
 |---|-----|--------|--------|
 | 2 | Component DB has 4 parts | ~1–2 days | **largely done** — 54 parts, layered catalog, CSV import, coverage disclosure. Remaining: per-value attribution, and getting entries actually datasheet-reviewed |
-| 5 | No release signatures | ~1–2 days | **done** — pure-Python Ed25519 (`vcm_core/ed25519.py`, RFC 8032 vectors in tests), `vcm key`, `vcm release sign`, `trustdb.json`, signed passports. Open: key revocation/expiry, encrypted private keys |
-| 6 | No API auth | ~1 day | **done** — bearer tokens, fail-closed, 127.0.0.1 default, identity bound to token. Open: roles/permissions, TLS, rotation, audit log |
+| 5 | No release signatures | ~1–2 days | **done** — Ed25519 (optional `cryptography`, pure-Python fallback), `vcm key` (gen/revoke/encrypt), `vcm release sign`, `trustdb.json`, signed passports and PR approvals. Open: key expiry, external audit |
+| 6 | No API auth | ~1 day | **done** — bearer tokens, fail-closed, 127.0.0.1 default, identity bound to token. Roles done. Open: per-repo permissions, TLS, rotation, audit log |
 | 3 | Hand-made KiCad fixtures | ~2–3 days | open |
 | 1 | Schematic nets not traced | ~1–2 weeks | open |
 | 4 | Single-user, no remotes | ~2–3 weeks | **largely addressed** — filesystem remotes (push/pull/clone, fast-forward only), file locks, protected branches, PR merge (fast-forward), plus the shared Appwrite graph backend. Open: S3/HTTP transports, PR sync, required-reviewer lists. Merge is still deliberately not planned |
@@ -194,11 +202,11 @@ rather than one `source` per part), and getting entries genuinely datasheet-revi
 (passports: the canonical-JSON digest minus `signatures`) with pure-Python Ed25519. Verification
 reads `trustdb.json` and reports `authenticated` separately from `ok`: an unsigned release still
 verifies (hashes prove consistency), but is never described as authenticated. Tests:
-`tests/test_signing.py`. Open: revocation/expiry, encrypted private keys, signing commits/PRs.
+`tests/test_signing.py`. Revocation and encrypted keys are done. Open: key expiry, signing commits.
 
 ### 6. API authentication — built
 
-`vcm_api/auth.py` + the middleware in `create_app`. Open: roles, TLS, token rotation, audit log.
+`vcm_api/auth.py` + the middleware in `create_app`. Roles done. Open: per-repo/branch permissions, TLS, token rotation, audit log.
 Tests: `tests/test_api_auth.py`.
 
 ### 3. Real KiCad fixtures

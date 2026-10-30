@@ -2,6 +2,7 @@
 from .pullrequest import (
     add_comment,
     approve,
+    approve_signed,
     close_pr,
     get_pr,
     list_prs,
@@ -13,6 +14,6 @@ from .release import create_release, sign_release, to_yaml, verify_release
 from .rollback import plan_rollback, render_plan
 from .timeline import explain, render_timeline, timeline
 
-__all__ = ["add_comment", "approve", "close_pr", "get_pr", "list_prs", "merge_pr", "open_pr",
+__all__ = ["add_comment", "approve", "approve_signed", "close_pr", "get_pr", "list_prs", "merge_pr", "open_pr",
            "render_pr", "create_release", "sign_release", "to_yaml", "verify_release",
            "plan_rollback", "render_plan", "explain", "render_timeline", "timeline"]

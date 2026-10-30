@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import sys
@@ -33,6 +34,7 @@ from vcm_validation import check_bom_text, compare_validation, validate_revision
 from vcm_workflow import (
     add_comment,
     approve,
+    approve_signed,
     close_pr,
     create_release,
     explain,
@@ -226,9 +228,15 @@ def cmd_release_sign(args) -> int:
 
 def cmd_key(args) -> int:
     if args.key_cmd == "gen":
-        info = signing.generate_key(args.name)
+        pw = None
+        if args.encrypt:
+            pw = os.environ.get("VCM_KEY_PASSPHRASE") or getpass.getpass("passphrase: ")
+            if not pw:
+                raise VcmError("empty passphrase")
+        info = signing.generate_key(args.name, pw)
         print(f"created key {info['name']}  id {info['key_id']}\n  public: {info['public']}\n"
-              f"  private key stored in {signing.key_dir()} (mode 0600); back it up, never commit it")
+              f"  private key stored {'ENCRYPTED' if pw else 'unencrypted'} in {signing.key_dir()} "
+              "(mode 0600); back it up, never commit it")
         if args.trust:
             signing.trust_key(_repo(args).root, info["name"], info["public"])
             print(f"  trusted in {signing.TRUSTDB}; commit that file to share the trust set")
@@ -238,12 +246,16 @@ def cmd_key(args) -> int:
     elif args.key_cmd == "trust":
         t = signing.trust_key(_repo(args).root, args.name, args.public)
         print(f"trusted {t['name']} (id {t['key_id']})")
+    elif args.key_cmd == "revoke":
+        k = signing.revoke_key(_repo(args).root, args.key_id, args.reason)
+        print(f"revoked {args.key_id} ({k['name']}); commit trustdb.json. Signatures by it no longer count")
     elif args.key_cmd == "untrust":
         signing.untrust_key(_repo(args).root, args.key_id)
         print(f"removed {args.key_id} from {signing.TRUSTDB}")
     elif args.key_cmd == "trusted":
         for kid, k in sorted(signing.load_trustdb(_repo(args).root)["keys"].items()):
-            print(f"{kid}  {k['name']}  added {k['added_at']}")
+            print(f"{kid}  {k['name']}  added {k['added_at']}"
+                  + (f"  REVOKED {k['revoked_at']}" if k.get("revoked_at") else ""))
     return 0
 
 
@@ -328,7 +340,12 @@ def cmd_pr(args) -> int:
     elif args.pr_cmd == "comment":
         print(render_pr(add_comment(repo, args.id, args.author, args.text)))
     elif args.pr_cmd == "approve":
-        print(render_pr(approve(repo, args.id, args.by)))
+        if args.key:
+            print(render_pr(approve_signed(repo, args.id, args.key)))
+        elif args.by:
+            print(render_pr(approve(repo, args.id, args.by)))
+        else:
+            raise VcmError("give --key (signed, verified identity) or --by (self-asserted name)")
     elif args.pr_cmd == "merge":
         print(render_pr(merge_pr(repo, args.id, args.by)))
     elif args.pr_cmd == "close":
@@ -425,8 +442,14 @@ def cmd_config(args) -> int:
     if args.value is None:
         print(cfg.get(args.key, ""))
         return 0
+    if args.key == "require_signed_approvals" and args.value in ("true", "false"):
+        cfg[args.key] = args.value == "true"
+        repo.save_config(cfg)
+        print(f"{args.key} = {args.value}")
+        return 0
     if args.key != "required_approvals" or not args.value.isdigit() or int(args.value) < 1:
-        raise VcmError("only `required_approvals` (an integer >= 1) can be set")
+        raise VcmError("settable keys: required_approvals (integer >= 1), "
+                       "require_signed_approvals (true|false)")
     cfg[args.key] = int(args.value)
     repo.save_config(cfg)
     print(f"{args.key} = {args.value}")
@@ -622,11 +645,17 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_key)
     s.add_argument("name")
     s.add_argument("--trust", action="store_true", help="also add it to this project's trustdb.json")
+    s.add_argument("--encrypt", action="store_true",
+                   help="protect the private key with a passphrase ($VCM_KEY_PASSPHRASE or prompt)")
     k.add_parser("list", help="local signing keys").set_defaults(fn=cmd_key)
     s = k.add_parser("trust", help="trust a public key for this project")
     s.set_defaults(fn=cmd_key)
     s.add_argument("name")
     s.add_argument("public", help="64 hex characters")
+    s = k.add_parser("revoke", help="mark a trusted key revoked (signatures by it stop counting)")
+    s.set_defaults(fn=cmd_key)
+    s.add_argument("key_id")
+    s.add_argument("--reason", default="")
     s = k.add_parser("untrust", help="stop trusting a key")
     s.set_defaults(fn=cmd_key)
     s.add_argument("key_id")
@@ -683,7 +712,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = pr.add_parser("approve")
     s.set_defaults(fn=cmd_pr)
     s.add_argument("id", type=int)
-    s.add_argument("--by", required=True)
+    s.add_argument("--by", help="self-asserted approver name")
+    s.add_argument("--key", help="sign the approval with this key; identity = the trusted key's name")
     s = pr.add_parser("merge", help="fast-forward the base branch to the PR head")
     s.set_defaults(fn=cmd_pr)
     s.add_argument("id", type=int)

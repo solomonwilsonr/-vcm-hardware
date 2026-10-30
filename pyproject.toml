@@ -14,7 +14,8 @@ dependencies = []
 [project.optional-dependencies]
 api = ["fastapi>=0.110", "uvicorn>=0.29"]
 appwrite = ["appwrite>=27.1"]
-dev = ["pytest>=8", "httpx>=0.27", "fastapi>=0.110", "ruff>=0.4", "pyyaml>=6", "appwrite>=27.1"]
+signing = ["cryptography>=42"]  # constant-time Ed25519; the pure-Python fallback works without it
+dev = ["pytest>=8", "httpx>=0.27", "fastapi>=0.110", "ruff>=0.4", "pyyaml>=6", "appwrite>=27.1", "cryptography>=42"]
 
 [project.scripts]
 vcm = "vcm_cli.main:main"

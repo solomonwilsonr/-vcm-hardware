@@ -49,11 +49,11 @@ Findings: verified 6, rule_based 8, speculative 3 | severity: critical 2, warnin
 | 5 | Impact analysis | `services/ai-engine` | **Implemented** as a deterministic rule engine over a component catalog. Node rules: power budget under redundancy policy, chassis cooling, PCIe generation and lane budget, driver minimums, power-connector change. LLM provider interface exists with a no-op default; no real LLM provider ships |
 | 6 | Component catalog | `services/ai-engine` | **Implemented**: 86 parts across three layers, user and project overrides, JSON/CSV import, and explicit coverage reporting |
 | 7 | Validation | `services/validation` | **Implemented**: built-in checks plus an optional `kicad-cli` wrapper for the board domain (skipped when absent) |
-| 8 | Release manifests, verification, rollback planner | `packages/workflow` | **Implemented** (JSON/YAML manifest, tamper detection by re-hashing, domain-aware rollback wording) plus **Ed25519 signatures** checked against a committed `trustdb.json`; signed device passports |
+| 8 | Release manifests, verification, rollback planner | `packages/workflow` | **Implemented** (JSON/YAML manifest, tamper detection by re-hashing, domain-aware rollback wording) plus **Ed25519 signatures** checked against a committed `trustdb.json`, key **revocation**, optionally passphrase-encrypted private keys, and signed device passports |
 | 9 | Physical traceability: unit registry, passports, QR | `services/traceability` | **Implemented** with a local JSON registry and a pure-Python QR encoder |
-| 10 | Hardware pull requests | `packages/workflow` | **Implemented, fast-forward only**: review record (diff, impact, validation, comments, approvals), configurable required approvals, no self-approval, a **merge** action that fast-forwards the base branch, and protected branches. Identity is verified only through the API (item 12); the CLI trusts `--author`/`--by`. No three-way merge, no required-reviewer lists, no code owners |
+| 10 | Hardware pull requests | `packages/workflow` | **Implemented, fast-forward only**: review record (diff, impact, validation, comments, approvals), configurable required approvals, no self-approval, a **merge** action that fast-forwards the base branch, and protected branches. Approvals can be **signed** (`vcm pr approve --key`), which makes the approver's identity the trusted key's name; `require_signed_approvals` makes only those count. Identity is otherwise verified only through the API (item 12); the CLI trusts `--author`/`--by`. No three-way merge, no required-reviewer lists, no code owners |
 | 11 | Time machine (`timeline`, `explain`) | `packages/workflow` | **Implemented** |
-| 12 | CLI, REST API, dashboard | `packages/vcm-cli`, `services/api` | **Implemented**. The API **requires a bearer token and refuses to start without one** (`--insecure` to opt out), binds to 127.0.0.1 by default, and takes PR authors, approvers, mergers and lock holders from the token. No roles or per-route permissions: every valid token can do everything, including breaking locks |
+| 12 | CLI, REST API, dashboard | `packages/vcm-cli`, `services/api` | **Implemented**. The API **requires a bearer token and refuses to start without one** (`--insecure` to opt out), binds to 127.0.0.1 by default, and takes PR authors, approvers, mergers and lock holders from the token. Three roles (reader < writer < maintainer): only maintainers may merge, sign releases or break another holder's lock. Roles are coarse and per-method; there is no per-repository or per-branch permission |
 | 13 | Integrations and apps: BMC/Redfish import, `nvidia-smi` ingest, web app, desktop app | `integrations/`, `apps/` | **Planned**: README stubs only |
 
 ## Quickstart
@@ -186,8 +186,11 @@ vcm pr open --base main --head feature --title "H100 NVL upgrade" --author bob
 vcm pr approve 1 --by alice
 vcm pr merge 1 --by carol
 
-# authenticity: Ed25519 release and passport signatures, offline
-vcm key gen release-bot --trust      # private key -> ~/.vcm/keys, public key -> trustdb.json
+# authenticity: Ed25519 release, passport and approval signatures, offline
+vcm key gen release-bot --trust --encrypt   # key -> ~/.vcm/keys (passphrase-protected); public -> trustdb.json
+vcm key revoke <key-id> --reason "laptop lost"
+vcm config require_signed_approvals true
+vcm pr approve 1 --key alice         # identity = the trusted key's name, not a typed string
 vcm commit -m "trust release-bot"    # trustdb.json is a normal committed file
 vcm release sign R1.1 --key release-bot
 vcm release verify R1.1 --require-signature
@@ -196,7 +199,7 @@ vcm release verify R1.1 --require-signature
 Serve the API with a token (it refuses to start without one, and binds to localhost):
 
 ```bash
-VCM_API_TOKENS="alice=<16+ chars>,bob=<16+ chars>" python -m vcm_api --repo /path/to/repo
+VCM_API_TOKENS="alice=<16+ chars>:maintainer,bob=<16+ chars>" python -m vcm_api --repo /path/to/repo
 curl -H "Authorization: Bearer <token>" http://127.0.0.1:8000/api/whoami
 ```
 
@@ -235,15 +238,21 @@ human has actually checked it.
   sample KiCad files are hand-generated and have not been opened in KiCad.
 - Collaboration is deliberately narrower than Git or GitHub. Remotes are filesystem paths only;
   branches move by fast-forward and **there is no merge**; history is first-parent only. There are
-  no issues, no CI service, no hosted web UI, no forks and no roles or per-route permissions.
+  no issues, no CI service, no hosted web UI, no forks, and only three coarse API roles (no per-repository or per-branch permissions).
 - Locks are advisory and cooperative: the holder name is self-asserted outside the API, and they are
   enforced only by `vcm commit` and `vcm push` (a remote whose files you edit directly is not
   protected). Push checks locks held on the *remote*; local locks stop local commits.
 - A signature proves a key holder signed; it does not prove who the key holder is. Trust is exactly
-  the contents of `trustdb.json`, so protect changes to that file (it is an ordinary committed file;
-  there is no key revocation list or expiry). Private keys sit unencrypted (mode 0600) in
-  `~/.vcm/keys`. The bundled Ed25519 is pure Python, correct against the RFC 8032 vectors, but not
-  constant-time or independently audited.
+  the contents of `trustdb.json`, so protect changes to that file (it is an ordinary committed file).
+  `vcm key revoke` marks a key revoked and every signature by it stops counting, old ones too
+  (there is no trustworthy signing time to honour). There is no key expiry. Private keys are
+  unencrypted (mode 0600) unless created with `--encrypt`, which uses scrypt plus an
+  encrypt-then-MAC construction built from the standard library; that construction is mine and
+  unreviewed, so treat it as defence in depth, not a vault. Ed25519 uses the `cryptography` package
+  (constant-time) when installed and otherwise a pure-Python fallback that matches the RFC 8032
+  vectors but is not constant-time. Neither has been independently audited for this project.
+- The CLI itself is unauthenticated: anyone at the keyboard can type any `--author`. Signed
+  approvals and signed releases are the way to get verified identity there.
 - Authentication is one static bearer token per identity, read from the environment. There is no
   TLS (put it behind a reverse proxy off localhost), no rate limiting, no token rotation and no
   audit log.

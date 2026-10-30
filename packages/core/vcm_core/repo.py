@@ -286,3 +286,20 @@ class Repository:
             return None
         data = json.loads(self.store.read(hist[-1]["hash"]))
         return {**data, "_evidence": hist[-1]}
+
+    # ---- named JSON records (releases, devices, pull requests) -----
+    def save_record(self, kind: str, name: str, data: dict) -> Path:
+        p = self.dir / kind / f"{name}.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+        return p
+
+    def load_record(self, kind: str, name: str) -> dict:
+        p = self.dir / kind / f"{name}.json"
+        if not p.is_file():
+            raise VcmError(f"no such {kind[:-1]}: {name}")
+        return json.loads(p.read_text())
+
+    def list_records(self, kind: str) -> list[dict]:
+        base = self.dir / kind
+        return [json.loads(p.read_text()) for p in sorted(base.glob("*.json"))] if base.is_dir() else []

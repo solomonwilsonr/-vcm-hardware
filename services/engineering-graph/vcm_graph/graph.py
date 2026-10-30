@@ -88,7 +88,7 @@ class EngineeringGraph:
         for net, _ in self.out(comp_id, "connects_to"):
             if (self.node(net) or {}).get("ground"):
                 continue
-            for other, props in self.into(net, "connects_to"):
+            for other, _props in self.into(net, "connects_to"):
                 if other != comp_id:
                     entry = found.setdefault(other, {"component": other, "via_nets": []})
                     entry["via_nets"].append(net.split(":", 1)[1])

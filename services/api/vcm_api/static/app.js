@@ -283,7 +283,8 @@
   function table(headers, rows) {
     return h("div", { class: "scroll" },
       h("table", { class: "data" },
-        h("thead", {}, h("tr", {}, headers.map((x) => h("th", {}, x)))),
+        h("thead", {}, h("tr", {}, headers.map((x) =>
+          h("th", {}, x === "" ? h("span", { class: "sr" }, "Actions") : x)))),
         h("tbody", {}, rows)));
   }
 
@@ -1006,7 +1007,7 @@
       const p = await api("/api/rollback?target=" + encodeURIComponent(tgt) +
         "&current=" + encodeURIComponent(cur));
       const bucket = (cls, title, items) => h("div", { class: "bucket " + cls },
-        h("h4", {}, title + " · " + items.length),
+        h("h3", {}, title + " · " + items.length),
         items.length
           ? h("ul", {}, items.map((i) => h("li", {},
               h("b", { class: "mono" }, i.ref + " "), i.instruction)))
@@ -1055,6 +1056,7 @@
       { value: "pending", label: "Pending" }, { value: "", label: "All" },
       { value: "approved", label: "Approved" }, { value: "rejected", label: "Rejected" },
     ], "pending", () => loadProposals());
+    filter.setAttribute("aria-label", "Filter proposals by status");
     mount(main,
       h("div", { class: "view-head" },
         h("h1", {}, "Agents"),
@@ -1479,7 +1481,7 @@
       const p = await api("/api/fleet/rollout?" + q);
       const tone = p.blocked.length || p.deferred.length ? "warning" : "clean";
       const waves = p.waves.map((w) => h("div", { class: "wave" },
-        h("h4", {}, "Wave " + w.wave, h("span", { class: "count" },
+        h("h3", {}, "Wave " + w.wave, h("span", { class: "count" },
           plural(w.units.length, "unit"))),
         h("ul", {}, w.units.map((u) => h("li", {},
           h("b", { class: "mono" }, u.serial), h("span", { class: "dim" }, "  " + u.rack))))));

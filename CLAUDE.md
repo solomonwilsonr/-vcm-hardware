@@ -21,7 +21,7 @@ confidence classes, which were already domain-agnostic. The board domain still w
 tested (`examples/demo-pcb.sh`, `tests/test_impact.py`) — it is simply no longer the product.
 Do not reintroduce PCB vocabulary into user-facing strings.
 
-Current state: a working MVP, 306 passing tests, Appwrite TablesDB live. Trust is in place
+Current state: a working MVP, 367 passing tests (1 skipped without OpenCV), Appwrite TablesDB live. Trust is in place
 (Ed25519 signatures, hash-chained audit log, token auth with roles, policies), VCM can read real
 machines (Redfish / `nvidia-smi` captures, drift, measured draw) and reason across a fleet (racks,
 recalls, rack power, rollout waves, NetBox placement), and teams can share history through remotes

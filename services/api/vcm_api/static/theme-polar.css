@@ -1,0 +1,316 @@
+/* VCM "polar" theme: near-black canvas, hairline borders, generous rhythm, numbered sections.
+
+   Loaded after app.css and only restyles it: class names, layout structure and the semantic
+   colour split are unchanged. Confidence stays on cool hues and severity on warm hues, and the
+   non-colour cues app.css sets (shape, border style, text label) are untouched, so a heuristic
+   can still never read as a fact.
+
+   Scoped to exclude the explicit light and terminal themes so the toggle keeps working.
+   No external fonts, no images, no network. */
+
+:root:not([data-theme="light"]):not([data-theme="terminal"]) {
+  color-scheme: dark;
+
+  --bg: #000000;
+  --bg-grid: #08080a;
+  --panel: #0b0b0d;
+  --panel-2: #0f0f12;
+  --line: #1c1c21;
+  --line-2: #2c2c34;
+  --fg: #fafafa;
+  --fg-dim: #8b8b94;
+  --fg-faint: #5c5c66;
+  --accent: #ffffff;
+  --accent-dim: #26262e;
+  --focus: #ffffff;
+
+  /* Confidence — cool hues, lifted just enough to hold contrast on true black. */
+  --cf-verified: #4ade9f;
+  --cf-rule: #b7a2ff;
+  --cf-spec: #9aa3b2;
+  --cf-verified-bg: rgba(74, 222, 159, 0.08);
+  --cf-rule-bg: rgba(183, 162, 255, 0.08);
+  --cf-spec-bg: rgba(154, 163, 178, 0.08);
+
+  /* Severity — warm hues, never reused for confidence. */
+  --sv-critical: #ff6f61;
+  --sv-warning: #f5b544;
+  --sv-info: #8b93a3;
+  --sv-critical-bg: rgba(255, 111, 97, 0.10);
+  --sv-warning-bg: rgba(245, 181, 68, 0.10);
+  --sv-info-bg: rgba(139, 147, 163, 0.08);
+
+  --ok: #4ade9f;
+  --bad: #ff6f61;
+  --r: 10px;
+}
+
+/* The whole restyle hangs off this guard so the other themes are untouched. */
+:root:not([data-theme="light"]):not([data-theme="terminal"]) body {
+  background:
+    radial-gradient(900px 420px at 50% -220px, #141418 0%, rgba(20, 20, 24, 0) 70%),
+    var(--bg);
+  letter-spacing: -0.005em;
+}
+
+/* ------------------------------------------------------------------ chrome */
+
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .topbar {
+  padding: 14px 22px;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .brand b {
+  font: 600 15px/1 var(--sans);
+  letter-spacing: -0.02em;
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .brand .tagline,
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .repo-meta {
+  font-size: 11px;
+  color: var(--fg-faint);
+}
+
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .rail {
+  padding-top: 26px;
+  border-right: 1px solid var(--line);
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .rail a {
+  padding: 9px 18px;
+  border-left: 2px solid transparent;
+  color: var(--fg-dim);
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .rail a[aria-current] {
+  color: var(--fg);
+  border-left-color: var(--fg);
+  background: none;
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .rail a:hover { color: var(--fg); }
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .rail .sub {
+  color: var(--fg-faint);
+  font-size: 10.5px;
+}
+
+/* ------------------------------------------------------- headings & rhythm */
+
+:root:not([data-theme="light"]):not([data-theme="terminal"]) main { padding: 34px 26px 72px; }
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .view-head { margin: 0 0 26px; }
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .view-head h1 {
+  font: 500 30px/1.12 var(--sans);
+  letter-spacing: -0.035em;
+  margin-bottom: 8px;
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .view-head p {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--fg-dim);
+  max-width: 70ch;
+}
+
+/* ------------------------------------------------------------------ panels */
+
+:root:not([data-theme="light"]):not([data-theme="terminal"]) main { counter-reset: section; }
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .panel {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.022) 0%, rgba(255, 255, 255, 0) 120px),
+    var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  margin-bottom: 22px;
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .panel > header {
+  counter-increment: section;
+  padding: 14px 18px;
+  background: none;
+  border-bottom: 1px solid var(--line);
+}
+/* The numbered label is Polar's signature; it also gives dense views an anchor. */
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .panel > header::before {
+  content: counter(section, decimal-leading-zero);
+  font: 500 10.5px/1 var(--mono);
+  letter-spacing: 0.1em;
+  color: var(--fg-faint);
+  padding-top: 2px;
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .panel > header h2,
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .panel > header h3 {
+  font: 500 13.5px/1.3 var(--sans);
+  letter-spacing: 0.005em;
+  text-transform: none;
+  color: var(--fg);
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .panel .body { padding: 16px 18px; }
+
+/* ------------------------------------------------------------------- stats */
+
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .stats {
+  gap: 1px;
+  background: var(--line);
+  border-radius: var(--r);
+  margin-bottom: 22px;
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .stat { padding: 16px 16px 14px; }
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .stat .n {
+  font: 400 30px/1.05 var(--sans);
+  letter-spacing: -0.04em;
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .stat .n.txt {
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .stat .l {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  margin-top: 7px;
+  color: var(--fg-faint);
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .stat.zero .n { color: var(--fg-faint); }
+
+/* ----------------------------------------------------------------- verdict */
+
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .verdict {
+  border-radius: var(--r);
+  padding: 20px;
+  margin-bottom: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0) 90px),
+    var(--panel);
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .verdict .vtitle {
+  font: 500 19px/1.3 var(--sans);
+  letter-spacing: -0.02em;
+  margin-top: 10px;
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .verdict .vdetail {
+  color: var(--fg-dim);
+  line-height: 1.6;
+  max-width: 78ch;
+}
+
+/* ------------------------------------------------------- controls & tables */
+
+:root:not([data-theme="light"]):not([data-theme="terminal"]) button,
+:root:not([data-theme="light"]):not([data-theme="terminal"]) select,
+:root:not([data-theme="light"]):not([data-theme="terminal"]) input {
+  border-radius: 7px;
+  border-color: var(--line-2);
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) button:hover {
+  border-color: var(--fg-faint);
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) th {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--fg-faint);
+  border-bottom-color: var(--line);
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) td {
+  border-bottom-color: var(--line);
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+
+/* Keep focus clearly visible on a near-black canvas. */
+:root:not([data-theme="light"]):not([data-theme="terminal"]) :focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-theme="light"]):not([data-theme="terminal"]) .rail a { transition: none; }
+}
+
+/* --------------------------------------------- measure, rhythm and chrome */
+
+/* Polar holds its content in a column and lets black space do the framing.
+   A dashboard still needs density, so the column is wide but finite. */
+:root:not([data-theme="light"]):not([data-theme="terminal"]) main {
+  padding: 56px 40px 110px;
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) main > * {
+  max-width: 1360px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .view-head {
+  margin-bottom: 40px;
+  padding-bottom: 28px;
+  border-bottom: 1px solid var(--line);
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .view-head h1 {
+  font-size: 34px;
+  letter-spacing: -0.04em;
+}
+
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .panel { margin-bottom: 28px; }
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .stats { margin-bottom: 28px; }
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .verdict { margin-bottom: 32px; }
+
+/* The topbar reads as a product nav, not a status strip. */
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .topbar {
+  padding: 16px 40px;
+  gap: 28px;
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .brand .tagline {
+  color: var(--fg-faint);
+  max-width: 34ch;
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .repo-meta {
+  gap: 6px 18px;
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+}
+
+/* Stat tiles get room; the number carries the weight, the label recedes. */
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .stats {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .stat { padding: 20px 18px 18px; }
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .stat .n { font-size: 34px; }
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .stat .l {
+  margin-top: 10px;
+  line-height: 1.45;
+}
+
+/* Section number sits out in the margin on wide screens, as Polar does. */
+@media (min-width: 1100px) {
+  :root:not([data-theme="light"]):not([data-theme="terminal"]) .panel > header {
+    padding-left: 54px;
+    position: relative;
+  }
+  :root:not([data-theme="light"]):not([data-theme="terminal"]) .panel > header::before {
+    position: absolute;
+    left: 18px;
+    top: 16px;
+  }
+  :root:not([data-theme="light"]):not([data-theme="terminal"]) .panel .body { padding: 20px 22px; }
+}
+
+@media (max-width: 760px) {
+  :root:not([data-theme="light"]):not([data-theme="terminal"]) main { padding: 32px 16px 72px; }
+  :root:not([data-theme="light"]):not([data-theme="terminal"]) .topbar { padding: 14px 16px; }
+  :root:not([data-theme="light"]):not([data-theme="terminal"]) .view-head h1 { font-size: 26px; }
+  :root:not([data-theme="light"]):not([data-theme="terminal"]) .stat .n { font-size: 27px; }
+}
+
+/* A CSS grid leaves dead cells when the tile count does not divide evenly, and with a 1px
+   gap over a line-coloured backdrop that reads as a black void. Flex lets the last row
+   stretch to fill instead. */
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .stats {
+  display: flex;
+  flex-wrap: wrap;
+  grid-template-columns: none;
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .stat {
+  flex: 1 1 104px;
+  min-width: 0;
+}
+
+/* A repository path can be arbitrarily long. app.css already wraps this bar, so just cap how
+   much of the top bar it may claim and let it wrap rather than shove the theme button off. */
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .repo-meta {
+  max-width: 62%;
+  justify-content: flex-end;
+}

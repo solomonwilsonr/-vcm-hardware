@@ -21,6 +21,39 @@ It is built around three questions:
 > by tests in this repository. Everything marked *Planned* does not exist yet. See
 > [Limitations](#limitations).
 
+## How to test (2 minutes, no accounts, no network)
+
+You need Python 3.11+ and nothing else: no API keys, no faucet, no services. Everything runs offline.
+
+```bash
+git clone <this repo> && cd -vcm-hardware     # or open your checkout
+python3 -m venv .venv && . .venv/bin/activate
+make install        # pip install -e ".[dev]"
+make lint test      # ruff + the full test suite; expect all green
+make demo           # the whole flow on the GPU-node sample, ~10 s
+```
+
+What to look for in `make demo`:
+
+- **Step 3/5**: the semantic diff, then `Findings: verified 6, rule_based 8, speculative 3`, with the
+  node's draw at **4190 W against a 4000 W usable budget**. Every finding carries a confidence class.
+- **Step 7 and 11b**: releases verify; `signed by release-bot` appears once the release is signed.
+- **Step 11c**: push to a remote, clone it elsewhere, and the clone verifies the signed release.
+- **Last step**: a blob is corrupted on purpose and verification must *fail*; the demo then prints
+  `(tampering detected as expected)`. If it ever says tampering was not detected, that is a bug.
+
+Try the API (it refuses to start without a token, by design):
+
+```bash
+VCM_API_TOKEN=any-string-16-chars-or-more python -m vcm_api --repo demo-workspace &
+curl -s localhost:8000/api/health                                              # public: {"status":"ok"}
+curl -s localhost:8000/api/repo                                                # 401, no token
+curl -s -H "Authorization: Bearer any-string-16-chars-or-more" localhost:8000/api/whoami
+```
+
+(`python -m vcm_api` needs `pip install -e ".[api]"` for uvicorn. Run `make demo` first so
+`demo-workspace` exists.) The board-domain demo, kept from VCM's origin, is `bash examples/demo-pcb.sh`.
+
 ## The demo in one paragraph
 
 A node runs eight A100 PCIe accelerators on four 2000 W supplies in a 2+2 redundant bank. Someone
@@ -35,7 +68,7 @@ None of that is written down anywhere. It falls out of the graph plus a componen
 
 ```
 $ vcm impact v1.0 v1.1
-Findings: verified 6, rule_based 8, speculative 3 | severity: critical 2, warning 9, info 12
+Findings: verified 6, rule_based 8, speculative 3 | severity: critical 2, warning 9, info 6
 ```
 
 ## Modules: implemented vs planned

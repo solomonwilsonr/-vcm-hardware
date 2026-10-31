@@ -1,0 +1,129 @@
+/* VCM "terminal" theme: black canvas, monospace, bracketed corners, ticket-style cards.
+   Loaded after app.css and only restyles it: class names and the semantic colour split are
+   unchanged. Confidence stays on cool hues and severity on warm hues, so the warm ramp below
+   never doubles as a confidence colour. No external fonts or images. */
+
+:root:root:root {
+  color-scheme: dark;
+  --bg: #050505;
+  --bg-grid: #0b0b0b;
+  --panel: #0a0a0a;
+  --panel-2: #111111;
+  --line: #1f1f1f;
+  --line-2: #333333;
+  --fg: #f1f1ee;
+  --fg-dim: #a3a39d;
+  --fg-faint: #6b6b66;
+  --accent: #ff7a3d;
+  --accent-dim: #3a1b0d;
+  --focus: #ffe36b;
+
+  --cf-verified: #5ee6b0;
+  --cf-rule: #b9a0ff;
+  --cf-spec: #9a9a94;
+  --cf-verified-bg: rgba(94, 230, 176, 0.07);
+  --cf-rule-bg: rgba(185, 160, 255, 0.07);
+  --cf-spec-bg: rgba(154, 154, 148, 0.07);
+
+  --sv-critical: #ff4a2e;
+  --sv-warning: #ff9a3c;
+  --sv-info: #c9b458;
+  --sv-critical-bg: rgba(255, 74, 46, 0.10);
+  --sv-warning-bg: rgba(255, 154, 60, 0.08);
+  --sv-info-bg: rgba(201, 180, 88, 0.06);
+
+  --ok: #5ee6b0;
+  --bad: #ff4a2e;
+  --sans: var(--mono);
+  --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --r: 0;
+}
+
+body {
+  font: 13px/1.55 var(--mono);
+  background:
+    linear-gradient(var(--bg-grid) 1px, transparent 1px) 0 0 / 100% 56px,
+    var(--bg);
+}
+
+/* ---- chrome ---- */
+.topbar { background: var(--bg); border-bottom: 1px solid var(--line); }
+.brand b { letter-spacing: 0.3em; }
+.brand b::before { content: "[ "; color: var(--fg-faint); }
+.brand b::after { content: " ]"; color: var(--fg-faint); }
+.brand .tagline, .repo-meta, nav.rail a .sub, .field > span { text-transform: uppercase; letter-spacing: 0.08em; }
+.brand .tagline { font-size: 10.5px; }
+
+nav.rail { border-right: 1px solid var(--line); }
+nav.rail a { border-left: 0; padding: 9px 10px; text-transform: uppercase; letter-spacing: 0.1em; font-size: 12px; }
+nav.rail a[aria-current="page"] { background: transparent; color: var(--fg); font-weight: 700; }
+nav.rail a[aria-current="page"] { box-shadow: inset 2px 0 0 var(--accent); }
+nav.rail a:hover { background: var(--panel-2); }
+
+.view-head h1 {
+  font: 700 clamp(26px, 3.4vw, 40px)/1 var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.view-head p { color: var(--fg-faint); text-transform: uppercase; letter-spacing: 0.06em; font-size: 11px; }
+
+/* ---- panels: gridded frames with corner brackets ---- */
+.panel, .band, .stats, .verdict, .devcard, .bucket, .legend .lcard {
+  border-radius: 0;
+  position: relative;
+}
+.panel { background: var(--panel); border: 1px solid var(--line); }
+.panel > header { background: transparent; padding: 12px 14px; }
+.panel > header h2, .panel > header h3 { color: var(--fg); letter-spacing: 0.16em; font-size: 12px; }
+.panel::before, .panel::after, .verdict::before, .verdict::after {
+  content: ""; position: absolute; width: 10px; height: 10px; pointer-events: none;
+  border: 0 solid var(--fg-dim);
+}
+.panel::before, .verdict::before { top: -1px; left: -1px; border-width: 2px 0 0 2px; }
+.panel::after, .verdict::after { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; }
+
+/* ---- controls ---- */
+select, input, button, textarea { background: var(--panel-2); border: 1px solid var(--line); border-radius: 0; font-size: 12px; }
+select, button { text-transform: uppercase; letter-spacing: 0.06em; }
+button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #0a0a0a; }
+button.primary:hover:not(:disabled) { background: var(--focus); border-color: var(--focus); color: #0a0a0a; }
+
+/* ---- stat strip: bracketed readouts ---- */
+.stats { gap: 0; background: transparent; border: 0; }
+.stat { background: transparent; padding: 10px 14px; position: relative; }
+.stat::before { content: "["; position: absolute; left: 2px; top: 50%; transform: translateY(-50%); color: var(--fg-faint); font-size: 22px; }
+.stat::after { content: "]"; position: absolute; right: 2px; top: 50%; transform: translateY(-50%); color: var(--fg-faint); font-size: 22px; }
+.stat { padding-inline: 20px; }
+.stat .n { font-size: 26px; font-weight: 700; letter-spacing: 0.02em; }
+.stat .l { color: var(--fg-faint); }
+
+/* ---- verdict: ticket card ---- */
+.verdict {
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  border: 1px solid var(--line-2);
+  border-left-width: 3px;
+  padding-top: 30px;
+}
+.verdict::marker { content: ""; }
+.verdict > :first-child { position: relative; }
+.verdict::before { width: auto; height: auto; top: 0; left: 0; right: 0; border: 0; padding: 4px 12px;
+  content: "IMPACT VERDICT // VCM"; background: var(--line); color: var(--fg-dim);
+  font-size: 10px; letter-spacing: 0.16em; }
+.verdict .vtitle { font-size: 17px; letter-spacing: 0.02em; }
+
+/* ---- chips, bands, findings ---- */
+.cchip, .schip, .statuschip, .ref, .tag { border-radius: 0; text-transform: uppercase; letter-spacing: 0.06em; }
+.band { border-radius: 0; border-color: var(--line); }
+.band > header { background: transparent; border-bottom: 1px solid var(--line); }
+.finding { border-radius: 0; }
+.finding .ftitle { font-size: 13px; }
+table.data th { text-transform: uppercase; letter-spacing: 0.12em; font-size: 10.5px; color: var(--fg-faint); }
+table.data tbody tr:hover { background: var(--panel-2); }
+.devcard, .bucket, .legend .lcard { border-radius: 0; background: var(--panel); }
+.hopbar { border-radius: 0; background: linear-gradient(90deg, var(--sv-info), var(--sv-warning), var(--sv-critical)); }
+.skip, .err { border-radius: 0; }
+
+.stat .n.txt { font-size: 13px; word-break: normal; white-space: nowrap; }
+.stat { padding-inline: 22px; }

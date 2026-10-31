@@ -32,7 +32,8 @@ Next, in order of credibility gained:
 
 - Grow the component DB (importable from CSV/JSON, versioned, with source attribution per value).
 - More rules: connector pinout, decoupling per power pin, net voltage propagation, DNP handling, firmware pin-map checks.
-- Release signing (for example Sigstore or minisign style detached signatures) and signed device passports.
+- Key expiry, passphrase-protected or hardware-backed keys. Ed25519 release signing, passport
+  signing and key revocation are done (`vcm release sign`, `vcm device sign`, `vcm key revoke`).
 - Evidence ingestion: attach bench results, lab reports and CI outputs to revisions and link them to graph tests.
 
 ## Phase 3 (weeks 7-9): collaboration

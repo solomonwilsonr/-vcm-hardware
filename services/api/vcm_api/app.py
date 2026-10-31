@@ -54,6 +54,8 @@ from vcm_workflow import (
     verify_release,
 )
 
+from .topology import build_topology
+
 STATIC = Path(__file__).parent / "static"
 
 
@@ -246,6 +248,10 @@ def create_app(repo_path: str | None = None, insecure: bool | None = None) -> Fa
     @app.get("/api/graph/affected")
     def graph_affected(component: str, rev: str = "HEAD", depth: int = 1):
         return build_graph(repo(), rev).affected_by(component, depth)
+
+    @app.get("/api/topology")
+    def topology(rev: str = "HEAD"):
+        return build_topology(repo(), rev)
 
     @app.get("/api/graph/stats")
     def graph_stats(rev: str = "HEAD"):

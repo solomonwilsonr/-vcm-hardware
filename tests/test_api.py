@@ -218,3 +218,13 @@ def test_dashboard_empty_states_are_illustrated_but_still_explain(client):
     for kind in ("release", "review", "agent", "rack"):
         assert f'emptyArt("{kind}"' in js, kind
     assert "vcm release create" in js and "vcm pr open" in js
+
+
+def test_dashboard_script_has_no_duplicate_function_names(client):
+    """A second function with an existing name silently replaces it. The Setup page once did that
+    to the Lineage page's fleetPanel, and only a browser run noticed."""
+    import collections
+    import re
+    js = client.get("/static/app.js").text
+    names = collections.Counter(re.findall(r"^\s*(?:async\s+)?function\s+([A-Za-z0-9_$]+)\s*\(", js, re.M))
+    assert {k: v for k, v in names.items() if v > 1} == {}

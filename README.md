@@ -17,6 +17,8 @@ It is built around three questions:
 3. **Which physical units were built from the affected configuration?** Releases pin artifact
    hashes; nodes are registered against releases and can be looked up by component or revision.
 
+> Built for the Appwrite Databases Hackathon: see [docs/hackathon.md](docs/hackathon.md).
+
 > **Status: working MVP, honest scope.** Everything marked *Implemented* below runs and is covered
 > by tests in this repository. Everything marked *Planned* does not exist yet. See
 > [Limitations](#limitations).

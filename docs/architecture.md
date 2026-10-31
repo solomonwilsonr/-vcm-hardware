@@ -14,19 +14,29 @@ core -> file-parsers -> diff-engine -> engineering-graph -> validation -> ai-eng
 | `packages/core` | `vcm_core` | SHA-256 object store, revision (snapshot) model, refs, working-tree scan, commit/checkout, evidence and record storage |
 | `packages/file-parsers` | `vcm_parsers` | S-expression parser, KiCad schematic/PCB extraction, BOM CSV, merge into a `Design` |
 | `packages/diff-engine` | `vcm_diff` | Semantic diff of two `Design`s or two revisions, JSON and text output |
-| `services/engineering-graph` | `vcm_graph` | Builds the dependency graph of a revision into SQLite and answers "what is affected by X" |
+| `services/engineering-graph` | `vcm_graph` | Builds the dependency graph of a revision (SQLite or Appwrite TablesDB) and answers "what is affected by X"; also registers the shared Appwrite records backend |
 | `services/validation` | `vcm_validation` | Built-in checks, optional `kicad-cli` wrapper, versioned evidence, cross-revision comparison |
 | `services/ai-engine` | `vcm_ai` | Deterministic impact analysis, LLM provider interface, Markdown rendering |
 | `services/traceability` | `vcm_trace` | Device registry, passports, affected-device queries, QR encoder |
 | `packages/workflow` | `vcm_workflow` | Release manifests and verification, rollback planner, pull-request records, timeline and explain |
 | `packages/vcm-cli` | `vcm_cli` | `vcm` command (argparse) |
-| `services/api` | `vcm_api` | FastAPI REST API and static dashboard |
+| `services/api` | `vcm_api` | FastAPI REST API and static dashboard (sign-in, roles, locks, live activity) |
 
 ## Storage
 
 Everything lives under `<project>/.vcm/`: content-addressed `objects/`, `refs/heads`, `refs/tags`, `HEAD`, `evidence/<revision>/<kind>.json`, `releases/`, `devices/`, `prs/` and the SQLite `graph.db`. See [data-model.md](data-model.md).
 
 Blobs are written once (dedup by SHA-256), streamed in 1 MiB chunks so large binaries (STEP, Gerber zips, bitstreams) do not need to fit in memory, and made read-only. A revision is itself an object: its id is the hash of its canonical JSON, so history is tamper-evident against accidental change.
+
+### Shared records (optional)
+
+Releases, units, PRs and locks go through `repo.records` (`vcm_core/records.py`). The default is local
+JSON under `.vcm`; `vcm_graph` registers an Appwrite TablesDB implementation (`vcm_records` for the
+rows, `vcm_events` for a payload-free change feed). Locks rely on the store's exclusive create, which
+on Appwrite is a duplicate-row-id error, so acquisition is atomic across machines. The dashboard hears
+about changes by polling `/api/events`, or by Appwrite Realtime on the events table if the operator
+opts in. The core never imports Appwrite: the backend registers itself, and the SDK is imported only
+when it is selected.
 
 ## Data flow for a question
 

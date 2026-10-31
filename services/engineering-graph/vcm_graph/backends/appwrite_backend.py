@@ -305,16 +305,45 @@ class AppwriteBackend(GraphBackend):
 
 
 # ---- provisioning --------------------------------------------------
-_CREATORS = {"varchar": "create_varchar_column", "text": "create_text_column"}
+_CREATORS = {"varchar": "create_varchar_column", "text": "create_text_column",
+             "mediumtext": "create_mediumtext_column"}
 
 
-def provision(cfg: AppwriteConfig | None = None, service=None) -> dict:
-    """Create the database, both tables, their columns and indexes. Idempotent."""
+def error_code(exc: Exception) -> int:
+    """HTTP-style status of an SDK error (``AppwriteException.code``), or 0 if it has none."""
+    code = getattr(exc, "code", 0)
+    return code if isinstance(code, int) else 0
+
+
+def public_events_requested() -> bool:
+    """Opt-in: make the (payload-free) event feed world-readable so browsers can use Realtime."""
+    return os.environ.get("VCM_APPWRITE_REALTIME", "").lower() in ("1", "true", "yes")
+
+
+def provision(cfg: AppwriteConfig | None = None, service=None, public_events: bool | None = None
+              ) -> dict:
+    """Create the database, every table (graph, records, events), columns and indexes. Idempotent.
+
+    ``public_events`` (default: ``$VCM_APPWRITE_REALTIME``) grants the world read access to the
+    events table only, which carries no record content. Everything else stays private.
+    """
     cfg = cfg or AppwriteConfig()
     svc = service if service is not None else tables_db(cfg)
     from appwrite.enums.tables_db_index_type import TablesDBIndexType
+    from appwrite.permission import Permission
+    from appwrite.role import Role
 
-    from ..schema import EDGE_INDEXES, NODE_INDEXES
+    from ..schema import (
+        EDGE_INDEXES,
+        EVENT_COLUMNS,
+        EVENT_INDEXES,
+        EVENTS,
+        NODE_INDEXES,
+        RECORD_COLUMNS,
+        RECORD_INDEXES,
+        RECORDS,
+    )
+    public = public_events_requested() if public_events is None else public_events
     done: dict[str, list[str]] = {"created": [], "existed": []}
 
     def step(label: str, fn) -> None:
@@ -322,15 +351,19 @@ def provision(cfg: AppwriteConfig | None = None, service=None) -> dict:
             fn()
             done["created"].append(label)
         except Exception as exc:
-            if "already exists" in str(exc).lower() or "409" in str(exc):
+            if error_code(exc) == 409 or "already exists" in str(exc).lower() or "409" in str(exc):
                 done["existed"].append(label)
             else:
                 raise
 
     step(f"database:{cfg.database}", lambda: svc.create(cfg.database, "VCM engineering graph"))
     for table, columns, indexes in ((NODES, NODE_COLUMNS, NODE_INDEXES),
-                                    (EDGES, EDGE_COLUMNS, EDGE_INDEXES)):
-        step(f"table:{table}", lambda t=table: svc.create_table(cfg.database, t, t))
+                                    (EDGES, EDGE_COLUMNS, EDGE_INDEXES),
+                                    (RECORDS, RECORD_COLUMNS, RECORD_INDEXES),
+                                    (EVENTS, EVENT_COLUMNS, EVENT_INDEXES)):
+        perms = [Permission.read(Role.any())] if (table == EVENTS and public) else None
+        step(f"table:{table}", lambda t=table, p=perms: svc.create_table(
+            cfg.database, t, t, permissions=p))
         for key, (kind, size, required) in columns.items():
             def make(t=table, k=key, kind=kind, size=size, required=required):
                 fn = getattr(svc, _CREATORS[kind])
@@ -355,12 +388,15 @@ def health(cfg: AppwriteConfig | None = None, service=None) -> dict:
         listing = svc.list_tables(cfg.database)
         raw = listing["tables"] if isinstance(listing, dict) else getattr(listing, "tables", [])
         names = {getattr(t, "id", None) or _as_dict(t).get("$id") for t in raw}
+        from ..schema import EVENTS, RECORDS
         missing = [t for t in (NODES, EDGES) if t not in names]
+        no_records = [t for t in (RECORDS, EVENTS) if t not in names]
         return {"ok": not missing, "configured": True, "endpoint": cfg.endpoint,
-                "database": cfg.database, "tables": sorted(names), "missing_tables": missing}
+                "database": cfg.database, "tables": sorted(names), "missing_tables": missing,
+                "records_ready": not no_records, "missing_record_tables": no_records}
     except Exception as exc:
         return {"ok": False, "configured": True, "endpoint": cfg.endpoint, "error": str(exc)}
 
 
 __all__ = ["AppwriteBackend", "AppwriteConfig", "AppwriteConfigError", "provision", "health",
-           "load_dotenv", "find_dotenv"]
+           "load_dotenv", "find_dotenv", "error_code", "public_events_requested"]

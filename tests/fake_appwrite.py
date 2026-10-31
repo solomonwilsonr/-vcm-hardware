@@ -7,11 +7,14 @@ It also counts requests, which is how the batching behaviour is asserted.
 from __future__ import annotations
 
 import json
+import threading
 from collections import defaultdict
 
 
 class AppwriteError(Exception):
-    pass
+    def __init__(self, message: str, code: int = 0):
+        super().__init__(message)
+        self.code = code
 
 
 class _Row:
@@ -40,12 +43,17 @@ class _Table:
 
 def _parse(queries: list[str] | None) -> dict:
     """Decode SDK query strings into a simple plan."""
-    plan: dict = {"equal": {}, "limit": None, "offset": 0, "group_by": [], "count": None}
+    plan: dict = {"equal": {}, "gt": {}, "order": None, "limit": None, "offset": 0, "group_by": [],
+                  "count": None}
     for raw in queries or []:
         q = json.loads(raw)
         method, values, attr = q.get("method"), q.get("values", []), q.get("attribute")
         if method == "equal":
             plan["equal"][attr] = values[0]
+        elif method == "greaterThan":
+            plan["gt"][attr] = values[0]
+        elif method == "orderAsc":
+            plan["order"] = attr
         elif method == "limit":
             plan["limit"] = values[0]
         elif method == "offset":
@@ -67,19 +75,22 @@ class FakeTablesDB:
         self.tables: dict[str, dict[str, dict]] = {}
         self.columns: dict[str, dict[str, tuple]] = defaultdict(dict)
         self.indexes: dict[str, dict[str, tuple]] = defaultdict(dict)
+        self._lock = threading.Lock()   # the real service creates a row atomically
+        self.table_permissions: dict[str, list | None] = {}
         self.requests: list[tuple[str, str, int]] = []   # (op, table, row count)
 
     # ---- schema ----------------------------------------------------
     def create(self, database_id, name, **kw):
         if database_id in self.databases:
-            raise AppwriteError(f"Database already exists: {database_id}")
+            raise AppwriteError(f"Database already exists: {database_id}", 409)
         self.databases[database_id] = name
         return {"$id": database_id, "name": name}
 
     def create_table(self, database_id, table_id, name, **kw):
         if table_id in self.tables:
-            raise AppwriteError(f"Table already exists: {table_id}")
+            raise AppwriteError(f"Table already exists: {table_id}", 409)
         self.tables[table_id] = {}
+        self.table_permissions[table_id] = kw.get("permissions")
         return {"$id": table_id, "name": name}
 
     def list_tables(self, database_id, **kw):
@@ -89,7 +100,7 @@ class FakeTablesDB:
 
     def _add_column(self, table_id, key, spec):
         if key in self.columns[table_id]:
-            raise AppwriteError(f"Column already exists: {key}")
+            raise AppwriteError(f"Column already exists: {key}", 409)
         self.columns[table_id][key] = spec
         return {"key": key}
 
@@ -99,16 +110,19 @@ class FakeTablesDB:
     def create_text_column(self, database_id, table_id, key, required, **kw):
         return self._add_column(table_id, key, ("text", 0, required))
 
+    def create_mediumtext_column(self, database_id, table_id, key, required, **kw):
+        return self._add_column(table_id, key, ("mediumtext", 0, required))
+
     def create_index(self, database_id, table_id, key, type, columns, lengths=None, **kw):
         if key in self.indexes[table_id]:
-            raise AppwriteError(f"Index already exists: {key}")
+            raise AppwriteError(f"Index already exists: {key}", 409)
         self.indexes[table_id][key] = (tuple(columns), tuple(lengths or ()))
         return {"key": key}
 
     # ---- rows ------------------------------------------------------
     def _table(self, table_id) -> dict[str, dict]:
         if table_id not in self.tables:
-            raise AppwriteError(f"Table with the requested ID could not be found: {table_id}")
+            raise AppwriteError(f"Table with the requested ID could not be found: {table_id}", 404)
         return self.tables[table_id]
 
     def upsert_rows(self, database_id, table_id, rows, **kw):
@@ -118,19 +132,56 @@ class FakeTablesDB:
         for row in rows:
             rid = row["$id"]
             if rid in seen:      # the real service rejects a batch that repeats an id
-                raise AppwriteError(f"Row with the requested ID '{rid}' already exists.")
+                raise AppwriteError(f"Row with the requested ID '{rid}' already exists.", 409)
             seen.add(rid)
             t[rid] = dict(row)
         return {"rows": list(rows), "total": len(rows)}
 
+    def create_row(self, database_id, table_id, row_id, data, permissions=None, **kw):
+        t = self._table(table_id)
+        with self._lock:
+            self.requests.append(("create", table_id, 1))
+            if row_id in t:
+                raise AppwriteError(f"Row with the requested ID '{row_id}' already exists.", 409)
+            t[row_id] = {**data, "$id": row_id}
+        return self._one(t[row_id])
+
+    def get_row(self, database_id, table_id, row_id, queries=None, **kw):
+        t = self._table(table_id)
+        self.requests.append(("get", table_id, 1))
+        if row_id not in t:
+            raise AppwriteError(f"Row with the requested ID could not be found: {row_id}", 404)
+        return self._one(t[row_id])
+
+    def update_row(self, database_id, table_id, row_id, data=None, permissions=None, **kw):
+        t = self._table(table_id)
+        self.requests.append(("update", table_id, 1))
+        if row_id not in t:
+            raise AppwriteError(f"Row with the requested ID could not be found: {row_id}", 404)
+        t[row_id].update(data or {})
+        return self._one(t[row_id])
+
+    def delete_row(self, database_id, table_id, row_id, **kw):
+        t = self._table(table_id)
+        self.requests.append(("delete", table_id, 1))
+        if row_id not in t:
+            raise AppwriteError(f"Row with the requested ID could not be found: {row_id}", 404)
+        del t[row_id]
+        return {}
+
+    def _one(self, raw: dict):
+        return _Row(raw) if self.models else dict(raw)
+
     def _match(self, table_id, plan) -> list[dict]:
         return [r for r in self._table(table_id).values()
-                if all(r.get(k) == v for k, v in plan["equal"].items())]
+                if all(r.get(k) == v for k, v in plan["equal"].items())
+                and all(str(r.get(k, "")) > v for k, v in plan["gt"].items())]
 
     def list_rows(self, database_id, table_id, queries=None, **kw):
         plan = _parse(queries)
         self.requests.append(("list", table_id, 0))
-        rows = sorted(self._match(table_id, plan), key=lambda r: r["$id"])
+        order = plan["order"] or "$id"
+        rows = sorted(self._match(table_id, plan), key=lambda r: str(r.get(order, "")))
         if plan["group_by"]:  # aggregates come back as rows of group keys plus the count
             groups: dict[tuple, int] = defaultdict(int)
             for r in rows:

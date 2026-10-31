@@ -1,16 +1,15 @@
 """File locks with holder identity and expiry.
 
 Hardware artifacts (a ``.kicad_pcb``, a CAD file, a firmware image) cannot be merged meaningfully,
-so teams lock instead. A lock is one small JSON file, created with ``O_EXCL`` so two holders cannot
-both win. The store is a directory: ``.vcm/locks`` locally, or ``locks/`` inside a shared remote.
+so teams lock instead. A lock is one small record, created with an *exclusive* create (``O_EXCL``
+on disk, a duplicate row id in Appwrite) so two holders cannot both win. The store is
+``.vcm/locks`` locally, ``locks/`` inside a filesystem remote, or the shared Appwrite table.
 
 The holder is a self-asserted string. Locks coordinate cooperating people; they are not an access
 control. Identity is only verified where the REST API binds it to a bearer token.
 """
 from __future__ import annotations
 
-import json
-import os
 import time
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -33,21 +32,28 @@ def _iso(ts: float) -> str:
 
 
 class LockStore:
-    def __init__(self, directory: str | Path):
-        self.dir = Path(directory)
+    """Locks kept as records of kind ``locks`` in a record backend.
 
-    def _file(self, path: str) -> Path:
-        return self.dir / f"{sha256_bytes(path.encode())[:32]}.json"
+    ``LockStore(path)`` keeps them as files in that directory (``.vcm/locks``, or a remote's
+    ``locks/``); ``LockStore(backend)`` uses any ``RecordBackend``, so a team can share one set of
+    locks through Appwrite. Either way acquisition goes through an exclusive create.
+    """
 
-    def _read(self, f: Path) -> dict | None:
-        try:
-            return json.loads(f.read_text())
-        except (OSError, ValueError):
-            return None
+    KIND = "locks"
+
+    def __init__(self, store):
+        if isinstance(store, (str, Path)):
+            from .records import LocalRecords
+            store = LocalRecords(Path(store).parent)  # <parent>/locks/<key>.json
+        self.store = store
+        self.kind = self.KIND
+
+    def _key(self, path: str) -> str:
+        return sha256_bytes(path.encode())[:32]
 
     def get(self, path: str, now: float | None = None) -> dict | None:
         """The live lock on ``path``, or None (expired locks do not count)."""
-        lock = self._read(self._file(normalize(path)))
+        lock = self.store.get(self.kind, self._key(normalize(path)))
         return lock if lock and lock["expires_ts"] > (now or time.time()) else None
 
     def acquire(self, path: str, holder: str, ttl: int = DEFAULT_TTL, note: str = "",
@@ -61,24 +67,19 @@ class LockStore:
         t = now or time.time()
         lock = {"path": path, "holder": holder, "acquired_at": _iso(t), "expires_at": _iso(t + ttl),
                 "expires_ts": t + ttl, "note": note}
-        self.dir.mkdir(parents=True, exist_ok=True)
-        f = self._file(path)
+        key = self._key(path)
         for _ in range(3):
-            try:
-                fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
-            except FileExistsError:
-                cur = self._read(f)
-                if cur and cur["expires_ts"] > t:
-                    if cur["holder"] != holder:
-                        raise VcmError(f"{path} is locked by {cur['holder']} until {cur['expires_at']}") from None
-                    lock["acquired_at"] = cur["acquired_at"]
-                    f.write_text(json.dumps(lock, indent=2, sort_keys=True) + "\n")
-                    return lock
-                f.unlink(missing_ok=True)  # expired or unreadable: reclaim and retry
-                continue
-            with os.fdopen(fd, "w") as out:
-                out.write(json.dumps(lock, indent=2, sort_keys=True) + "\n")
-            return lock
+            if self.store.create(self.kind, key, lock):
+                return lock
+            cur = self.store.get(self.kind, key)
+            if cur and cur["expires_ts"] > t:
+                if cur["holder"] != holder:
+                    raise VcmError(
+                        f"{path} is locked by {cur['holder']} until {cur['expires_at']}") from None
+                lock["acquired_at"] = cur["acquired_at"]
+                self.store.put(self.kind, key, lock)
+                return lock
+            self.store.delete(self.kind, key)  # expired or unreadable: reclaim and retry
         raise VcmError(f"could not acquire lock on {path}")
 
     def release(self, path: str, holder: str, force: bool = False, now: float | None = None) -> dict:
@@ -88,14 +89,12 @@ class LockStore:
             raise VcmError(f"{path} is not locked")
         if cur["holder"] != holder and not force:
             raise VcmError(f"{path} is locked by {cur['holder']}, not {holder} (use --force to break it)")
-        self._file(path).unlink(missing_ok=True)
+        self.store.delete(self.kind, self._key(path))
         return cur
 
     def list(self, now: float | None = None) -> list[dict]:
-        if not self.dir.is_dir():
-            return []
         t = now or time.time()
-        locks = [lk for f in sorted(self.dir.glob("*.json")) if (lk := self._read(f))]
+        locks = self.store.list(self.kind)
         return sorted((lk for lk in locks if lk["expires_ts"] > t), key=lambda lk: lk["path"])
 
     def conflicts(self, paths, holder: str, now: float | None = None) -> list[dict]:

@@ -51,6 +51,15 @@ curl -s localhost:8000/api/repo                                                #
 curl -s -H "Authorization: Bearer any-string-16-chars-or-more" localhost:8000/api/whoami
 ```
 
+Open `http://127.0.0.1:8000` for the dashboard: it asks for the token, then shows your identity
+and role. Take a lock on the **Locks** page from a second browser tab as another token and watch the
+first tab update on its own. Merging a PR needs the `maintainer` role (`VCM_API_ROLE` defaults to
+`maintainer` for a single token).
+
+To try the shared store you need an Appwrite project (`cp .env.example .env`, then
+`vcm graph provision` and `vcm config records_backend appwrite`). **The offline test suite already
+exercises all of it against an in-process fake, so judging does not require credentials.**
+
 (`python -m vcm_api` needs `pip install -e ".[api]"` for uvicorn. Run `make demo` first so
 `demo-workspace` exists.) The board-domain demo, kept from VCM's origin, is `bash examples/demo-pcb.sh`.
 
@@ -83,10 +92,11 @@ Findings: verified 6, rule_based 8, speculative 3 | severity: critical 2, warnin
 | 6 | Component catalog | `services/ai-engine` | **Implemented**: 86 parts across three layers, user and project overrides, JSON/CSV import, and explicit coverage reporting |
 | 7 | Validation | `services/validation` | **Implemented**: built-in checks plus an optional `kicad-cli` wrapper for the board domain (skipped when absent) |
 | 8 | Release manifests, verification, rollback planner | `packages/workflow` | **Implemented** (JSON/YAML manifest, tamper detection by re-hashing, domain-aware rollback wording) plus **Ed25519 signatures** checked against a committed `trustdb.json`, key **revocation**, optionally passphrase-encrypted private keys, and signed device passports |
-| 9 | Physical traceability: unit registry, passports, QR | `services/traceability` | **Implemented** with a local JSON registry and a pure-Python QR encoder |
+| 9 | Physical traceability: unit registry, passports, QR | `services/traceability` | **Implemented** with a pure-Python QR encoder. The unit registry is local JSON by default or **shared in Appwrite TablesDB** (see item 4b) |
 | 10 | Hardware pull requests | `packages/workflow` | **Implemented, fast-forward only**: review record (diff, impact, validation, comments, approvals), configurable required approvals, no self-approval, a **merge** action that fast-forwards the base branch, and protected branches. Approvals can be **signed** (`vcm pr approve --key`), which makes the approver's identity the trusted key's name; `require_signed_approvals` makes only those count. Identity is otherwise verified only through the API (item 12); the CLI trusts `--author`/`--by`. No three-way merge, no required-reviewer lists, no code owners |
 | 11 | Time machine (`timeline`, `explain`) | `packages/workflow` | **Implemented** |
-| 12 | CLI, REST API, dashboard | `packages/vcm-cli`, `services/api` | **Implemented**. The API **requires a bearer token and refuses to start without one** (`--insecure` to opt out), binds to 127.0.0.1 by default, and takes PR authors, approvers, mergers and lock holders from the token. Three roles (reader < writer < maintainer): only maintainers may merge, sign releases or break another holder's lock. Roles are coarse and per-method; there is no per-repository or per-branch permission |
+| 4b | Shared records and change feed | `services/engineering-graph`, `packages/core` | **Implemented**: releases, units, PRs and **locks** can live in Appwrite TablesDB (`vcm config records_backend appwrite`), with atomic lock acquisition, a payload-free change feed, `vcm records provision/migrate/status`, and opt-in **Appwrite Realtime** for the dashboard. Tested offline against a faithful fake; the live Realtime WebSocket path has **not** been exercised against a real Appwrite project |
+| 12 | CLI, REST API, dashboard | `packages/vcm-cli`, `services/api` | **Implemented**. The dashboard has sign-in, role-aware controls, a Locks view with a live activity feed, signature status on releases, and PR approve/merge. The API **requires a bearer token and refuses to start without one** (`--insecure` to opt out), binds to 127.0.0.1 by default, and takes PR authors, approvers, mergers and lock holders from the token. Three roles (reader < writer < maintainer): only maintainers may merge, sign releases or break another holder's lock. Roles are coarse and per-method; there is no per-repository or per-branch permission |
 | 13 | Integrations and apps: BMC/Redfish import, `nvidia-smi` ingest, web app, desktop app | `integrations/`, `apps/` | **Planned**: README stubs only |
 
 ## Quickstart
@@ -162,10 +172,38 @@ vcm graph push --rev v1.1
 vcm graph query --component GPU0 --rev v1.1 --backend appwrite
 ```
 
-Design files stay local; only the graph is shared. Row ids are deterministic hashes, so a re-push
+Design files stay local; only the graph is shared (and, below, the review state). Row ids are deterministic hashes, so a re-push
 upserts rather than duplicating; writes are batched into bulk upserts; and a revision's subgraph is
 paged into memory once for traversal, or queried live with `prefetch=False`. The test suite asserts
 that an Appwrite-backed graph returns **byte-identical** results to the local SQLite one.
+
+### Shared review state and locks on Appwrite
+
+The same database can hold the state a team actually fights over: **who has a file locked, which
+PRs are approved, which releases exist, which units were built.** Local files remain the default.
+
+```bash
+vcm graph provision                       # also creates vcm_records and vcm_events
+vcm config records_backend appwrite       # or: VCM_RECORDS_BACKEND=appwrite
+vcm config appwrite_scope gpu-node-team   # one scope per project; a team shares one scope
+vcm records migrate                       # copy existing local records up (never overwrites)
+vcm records status
+vcm events                                # what changed: kind, name, action, actor
+```
+
+- **Locks are atomic.** A lock's row id derives from its path, so `create_row` on a taken path fails
+  with HTTP 409. Two engineers racing for one `.kicad_pcb` cannot both win, and the database, not a
+  client-side check-then-write, decides. A test races eight threads and asserts exactly one winner.
+- **A change feed with no content.** Every write appends `{kind, name, action, actor, at}` to
+  `vcm_events`. The dashboard polls `/api/events`, and shows PRs, locks and releases updating live
+  across browsers.
+- **Appwrite Realtime, opt-in.** `vcm records provision --realtime` (or `VCM_APPWRITE_REALTIME=1`)
+  makes *only the events table* world-readable, and the dashboard then subscribes to it over a
+  WebSocket for instant updates, polling slowly as a fallback. Record content, locks and PR bodies
+  stay private, and the API key never reaches the browser. The default leaves the events table
+  private and the dashboard polls. **Honest status:** this path is built to Appwrite's documented
+  channel names and tested only against a fake; it has not been run against a live project.
+- **Roles are enforced by the VCM API in front of the store**, not by Appwrite row permissions.
 
 ## Confidence classes
 

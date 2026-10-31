@@ -15,7 +15,7 @@ from vcm_graph.backends.appwrite_backend import (
     load_dotenv,
     provision,
 )
-from vcm_graph.schema import EDGES, NODES
+from vcm_graph.schema import EDGES, EVENTS, NODES, RECORDS
 
 
 @pytest.fixture(params=[False, True], ids=["plain-dicts", "sdk-models"])
@@ -36,7 +36,7 @@ def _backend(fake, **kw):
 
 
 def test_provision_creates_schema_and_is_idempotent(fake):
-    assert set(fake.tables) == {NODES, EDGES}
+    assert set(fake.tables) == {NODES, EDGES, RECORDS, EVENTS}
     assert set(fake.columns[NODES]) == {"rev", "node_id", "type", "name", "props"}
     assert set(fake.columns[EDGES]) == {"rev", "src", "dst", "type", "props"}
     assert set(fake.indexes[EDGES]) == {"edge_rev_src", "edge_rev_dst"}
@@ -45,7 +45,7 @@ def test_provision_creates_schema_and_is_idempotent(fake):
     cfg = AppwriteConfig(endpoint="http://x", project="p", api_key="k", database="vcm")
     again = provision(cfg, fake)
     assert again["created"] == []
-    assert len(again["existed"]) == 17  # 1 database + 2 tables + 10 columns + 4 indexes
+    assert len(again["existed"]) == 32  # 1 database + 4 tables + 21 columns + 6 indexes
 
 
 def test_graph_matches_sqlite_exactly(sample_repo, fake):
@@ -129,7 +129,9 @@ def test_config_reads_environment(monkeypatch):
 def test_health_reports_provisioned_store(fake):
     cfg = AppwriteConfig(endpoint="http://x", project="p", api_key="k", database="vcm")
     assert health(cfg, fake) == {"ok": True, "configured": True, "endpoint": "http://x",
-                                 "database": "vcm", "tables": [EDGES, NODES], "missing_tables": []}
+                                 "database": "vcm", "tables": [EDGES, EVENTS, NODES, RECORDS],
+                                 "missing_tables": [], "records_ready": True,
+                                 "missing_record_tables": []}
 
 
 def test_health_reports_missing_tables():
@@ -138,6 +140,7 @@ def test_health_reports_missing_tables():
     svc.create_table("vcm", NODES, NODES)
     report = health(cfg, svc)
     assert report["ok"] is False and report["missing_tables"] == [EDGES]
+    assert report["records_ready"] is False
 
 
 def test_unknown_table_surfaces_the_error(fake):

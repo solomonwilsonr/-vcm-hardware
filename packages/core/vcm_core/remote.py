@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .locks import LockStore, describe_conflicts
 from .objects import ObjectStore
+from .records import LocalRecords
 from .repo import Repository, VcmError
 
 RECORD_KINDS = ("releases", "devices")  # create-only records that travel with the history
@@ -24,10 +25,12 @@ RECORD_KINDS = ("releases", "devices")  # create-only records that travel with t
 
 @dataclass
 class Side:
-    """Either end of a transfer: a ``.vcm``-shaped directory plus its object store."""
+    """Either end of a transfer: a ``.vcm``-shaped directory, its object store and its records
+    (local files for a remote; whatever backend the repository uses on the repo side)."""
 
     dir: Path
     store: ObjectStore
+    records: object = None
 
 
 def _side(path: Path, create: bool = False) -> Side:
@@ -35,8 +38,8 @@ def _side(path: Path, create: bool = False) -> Side:
     if create:
         for sub in ("refs/heads", "refs/tags", "evidence", *RECORD_KINDS):
             (path / sub).mkdir(parents=True, exist_ok=True)
-        return Side(path, ObjectStore(path / "objects"))
-    return Side(path, _ReadOnlyStore(path / "objects"))
+        return Side(path, ObjectStore(path / "objects"), LocalRecords(path))
+    return Side(path, _ReadOnlyStore(path / "objects"), LocalRecords(path))
 
 
 class _ReadOnlyStore(ObjectStore):
@@ -45,7 +48,7 @@ class _ReadOnlyStore(ObjectStore):
 
 
 def _repo_side(repo: Repository) -> Side:
-    return Side(repo.dir, repo.store)
+    return Side(repo.dir, repo.store, repo.records)
 
 
 # ---- remote configuration --------------------------------------------------------------
@@ -173,20 +176,20 @@ def _merge_record(kind: str, name: str, mine: dict, theirs: dict) -> dict | None
 def _sync_records(src: Side, dst: Side) -> int:
     n = 0
     for kind in RECORD_KINDS:
-        (dst.dir / kind).mkdir(parents=True, exist_ok=True)
-        for f in sorted((src.dir / kind).glob("*.json")):
-            mine = json.loads(f.read_text())
-            out = dst.dir / kind / f.name
-            if out.exists():
-                merged = _merge_record(kind, f.stem, mine, json.loads(out.read_text()))
+        for name in src.records.names(kind):
+            mine = src.records.get(kind, name)
+            theirs = dst.records.get(kind, name)
+            if theirs is None:
+                dst.records.put(kind, name, mine)
+                svg = src.dir / kind / f"{name}.svg"  # a device's QR, when kept locally
+                if svg.is_file():
+                    (dst.dir / kind).mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(svg, dst.dir / kind / svg.name)
+            else:
+                merged = _merge_record(kind, name, mine, theirs)
                 if merged is None:
                     continue
-                out.write_text(json.dumps(merged, indent=2, sort_keys=True) + "\n")
-            else:
-                shutil.copyfile(f, out)
-                svg = f.with_suffix(".svg")
-                if svg.is_file():
-                    shutil.copyfile(svg, out.with_suffix(".svg"))
+                dst.records.put(kind, name, merged)
             n += 1
     return n
 

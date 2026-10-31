@@ -19,14 +19,14 @@ def test_lock_conflict_renew_release(tmp_path):
 
 
 def test_expired_lock_is_reclaimable(tmp_path):
-    s = LockStore(tmp_path)
+    s = LockStore(tmp_path / "locks")
     s.acquire("a.txt", "alice", ttl=10, now=1000.0)
     assert s.get("a.txt", now=1011.0) is None
     assert s.acquire("a.txt", "bob", ttl=10, now=1011.0)["holder"] == "bob"
 
 
 def test_lock_needs_identity_and_safe_path(tmp_path):
-    s = LockStore(tmp_path)
+    s = LockStore(tmp_path / "locks")
     for bad in ("", "unknown"):
         with pytest.raises(VcmError):
             s.acquire("a.txt", bad)

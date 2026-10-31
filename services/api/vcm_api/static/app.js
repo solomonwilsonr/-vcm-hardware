@@ -43,6 +43,18 @@
   const mount = (e, ...kids) => { add(e, kids); return e; };
   const byId = (id) => document.getElementById(id);
 
+  /* Several refreshes can be in flight (a click, a live event). Only the newest may paint, or an
+     older response that lands late would overwrite newer state. */
+  /* A re-render must not eat what someone has typed. Snapshot form values by id, restore after. */
+  const rescue = (...ids) => {
+    const saved = ids.map((id) => [id, (byId(id) || {}).value]).filter(([, v]) => v);
+    return () => saved.forEach(([id, v]) => { const e = byId(id); if (e && !e.value) e.value = v; });
+  };
+
+  const gen = {};
+  const begin = (key) => { gen[key] = (gen[key] || 0) + 1; return gen[key]; };
+  const current = (key, n) => gen[key] === n;
+
   /* ------------------------------------------------------------------ api */
 
   /* The bearer token lives in sessionStorage only: gone when the tab closes, never sent
@@ -50,9 +62,10 @@
   const token = {
     get() { try { return sessionStorage.getItem("vcm-token") || ""; } catch (e) { return ""; } },
     set(v) { try { sessionStorage.setItem("vcm-token", v); } catch (e) { /* private mode */ } },
+    clear() { try { sessionStorage.removeItem("vcm-token"); } catch (e) { /* private mode */ } },
   };
 
-  async function api(path, opts, retried) {
+  async function api(path, opts) {
     const init = Object.assign({ headers: { accept: "application/json" } }, opts);
     if (init.json !== undefined) {
       init.method = init.method || "POST";
@@ -62,15 +75,13 @@
     }
     if (token.get()) init.headers = Object.assign({}, init.headers, { authorization: "Bearer " + token.get() });
     const r = await fetch(path, init);
-    if (r.status === 401 && !retried) {
-      const entered = window.prompt("This VCM API requires an access token:");
-      if (entered) { token.set(entered.trim()); return api(path, opts, true); }
-    }
     const ct = r.headers.get("content-type") || "";
     const payload = ct.includes("json") ? await r.json().catch(() => null) : await r.text();
     if (!r.ok) {
       const detail = payload && payload.detail ? payload.detail : r.statusText;
-      throw new Error(detail + " (" + r.status + ")");
+      const err = new Error(detail + " (" + r.status + ")");
+      err.status = r.status;
+      throw err;
     }
     return payload;
   }
@@ -266,9 +277,18 @@
     lineage: { ref: null, rev: "HEAD", depth: 2, serial: null },
     releases: { selected: null },
     review: { selected: null },
+    me: { identity: null, role: null, authenticated: false },
+    store: { backend: "local", scope: null, realtime: { enabled: false } },
+    feed: [],
     ui: {},
     view: null,
   };
+
+  /* Roles mirror the API: reader < writer < maintainer. With auth off the API trusts the caller,
+     so the UI offers everything and asks for a name instead. */
+  const ROLE_RANK = { reader: 0, writer: 1, maintainer: 2 };
+  const can = (role) => !S.me.authenticated || ROLE_RANK[S.me.role] >= ROLE_RANK[role];
+  const actorQuery = (name) => (S.me.authenticated || !name ? "" : "?by=" + encodeURIComponent(name));
 
   const revLabel = (r) =>
     r.short + (r.tags.length ? "  [" + r.tags.join(", ") + "]" : "") + "  " + r.message;
@@ -844,8 +864,8 @@
       h("div", { class: "view-head" },
         h("h1", {}, "Releases and rollback"),
         h("p", {}, "A release pins every artefact by hash. Verification re-hashes the object " +
-          "store; it proves the manifest is internally consistent, not that it is authentic — " +
-          "releases are not signed yet.")),
+          "store and checks Ed25519 signatures against the project's trusted keys. An unsigned " +
+          "release can be consistent, but it is never reported as authenticated.")),
       out,
       panel("Rollback planner", {}, h("div", { class: "toolbar" },
         field("Current", select("rb-cur", opts, S.cmp.b, null)),
@@ -859,30 +879,65 @@
 
   async function loadReleases() {
     const out = S.ui.rlOut;
+    const n = begin("releases");
     try {
       const rels = await api("/api/releases");
+      if (!current("releases", n)) return;
+      const restore = rescue("rl-key");
       const units = {};
       S.devices.forEach((d) => { units[d.release] = (units[d.release] || 0) + 1; });
       clear(out).append(panel("Releases", { count: rels.length, flush: true },
-        table(["Name", "Revision", "Created", "Validation", "manifest sha256", "Units", ""],
+        can("maintainer")
+          ? h("div", { class: "toolbar", style: "padding:10px 12px;border-bottom:1px solid var(--line)" },
+              field("Signing key (on the server)", h("input", { id: "rl-key", size: 16,
+                placeholder: "release-bot" })))
+          : null,
+        table(["Name", "Revision", "Created", "Validation", "Signed", "manifest sha256", "Units", ""],
           rels.map((r) => h("tr", {},
             h("td", { class: "m" }, r.name),
             h("td", {}, h("div", { class: "mono" }, shortHash(r.revision, 10)),
               h("div", { style: "color:var(--fg-faint)" }, r.revision_message)),
             h("td", { class: "m" }, when(r.created_at)),
             h("td", {}, statusChip(r.validation ? r.validation.status : "unknown")),
+            h("td", {}, signedChip(r)),
             h("td", { class: "m", title: r.manifest_sha256 }, shortHash(r.manifest_sha256, 20)),
             h("td", { class: "num" }, units[r.name] || 0),
             h("td", {}, h("div", { class: "toolbar" },
               h("button", { class: "ghost", type: "button",
                 onclick: () => showRelease(r, true) }, "Manifest"),
               h("button", { class: "ghost", type: "button",
-                onclick: (e) => verifyRelease(r.name, e.target) }, "Verify")))))),
+                onclick: (e) => verifyRelease(r.name, e.target) }, "Verify"),
+              can("maintainer")
+                ? h("button", { class: "ghost", type: "button",
+                    onclick: (e) => signRelease(r.name, e.target) }, "Sign")
+                : null))))),
         h("div", { id: "rl-detail" })));
+      restore();
       if (rels.length) showRelease(rels[rels.length - 1]);
       runRollback();
     } catch (e) {
       clear(out).append(errBox(e));
+    }
+  }
+
+  const signedChip = (r) => (r.signatures && r.signatures.length
+    ? h("span", { class: "statuschip neutral", title: r.signatures.map((x) => x.name).join(", ") },
+        plural(r.signatures.length, "signature"))
+    : h("span", { class: "statuschip neutral", style: "opacity:.7" }, "unsigned"));
+
+  async function signRelease(name, btn) {
+    const key = (byId("rl-key") || {}).value;
+    if (!key || !key.trim()) { byId("rl-key").focus(); return; }
+    btn.disabled = true;
+    try {
+      await api("/api/releases/" + encodeURIComponent(name) + "/signatures",
+        { json: { key: key.trim() } });
+      await loadReleases();
+      verifyRelease(name);
+    } catch (e) {
+      clear(byId("rl-detail")).append(errBox(e));
+    } finally {
+      btn.disabled = false;
     }
   }
 
@@ -904,8 +959,9 @@
             shortHash(p, 12)).join(", ") || "—"),
           h("dt", {}, "Created"), h("dd", {}, when(r.created_at)),
           h("dt", {}, "Manifest"), h("dd", { title: r.manifest_sha256 }, r.manifest_sha256),
-          h("dt", {}, "Signature"), h("dd", { style: "color:var(--fg-faint)" },
-            "not implemented")),
+          h("dt", {}, "Signatures"), h("dd", {}, (r.signatures || []).length
+            ? r.signatures.map((x) => x.name + " (" + shortHash(x.key_id, 8) + ")").join(", ")
+            : "unsigned")),
         h("dl", { class: "kv" },
           h("dt", {}, "vcm"), h("dd", {}, r.toolchain.vcm),
           h("dt", {}, "python"), h("dd", {}, r.toolchain.python),
@@ -928,9 +984,14 @@
     clear(box).append(loading("Verifying " + name));
     try {
       const v = await api("/api/releases/" + encodeURIComponent(name) + "/verify");
+      const who = (v.signers || []).filter((x) => x.valid && x.trusted).map((x) => x.name);
       clear(box).append(panel("Verification · " + name, {
-        extra: h("span", { class: "statuschip " + (v.ok ? "ok" : "fail") },
-          v.ok ? "all checks passed" : plural(v.problems.length, "problem")),
+        extra: h("span", {},
+          h("span", { class: "statuschip " + (v.ok ? "ok" : "fail") },
+            v.ok ? "all checks passed" : plural(v.problems.length, "problem")), " ",
+          h("span", { class: "statuschip " + (v.authenticated ? "ok" : "neutral") },
+            v.authenticated ? "authenticated: " + who.join(", ")
+              : "not authenticated (integrity only)")),
       },
         h("ul", { class: "checks" }, v.checks.map((c) =>
           h("li", { class: c.ok ? "ok" : "bad" },
@@ -992,29 +1053,34 @@
     mount(main,
       h("div", { class: "view-head" },
         h("h1", {}, "Hardware pull requests"),
-        h("p", {}, "A local review record attached to a revision pair. There is no merge " +
-          "action, no identity and no permissions — authors and approvals are " +
-          "self-asserted free text.")),
+        h("p", {}, "A review record attached to a revision pair. Merging fast-forwards the base " +
+          "branch; there is no merge commit. Behind API auth the author, approvers and merger " +
+          "are the token's identity, and a signed approval ties an approver to a trusted key.")),
       out);
     S.ui.prOut = out;
     loadPrs();
   }
 
+  function prPanel(prs) {
+    return panel("Reviews", { count: prs.length, flush: true },
+      prs.length
+        ? table(["#", "Title", "Base → Head", "State", "Approvals", ""], prs.map((p) =>
+            h("tr", {}, h("td", { class: "m" }, p.id), h("td", {}, p.title),
+              h("td", { class: "m" }, p.base + " → " + p.head),
+              h("td", {}, statusChip(p.state)),
+              h("td", { class: "num" }, p.approvals),
+              h("td", {}, h("button", { class: "ghost", type: "button",
+                onclick: () => showPr(p.id) }, "Open")))))
+        : empty("No pull requests recorded."));
+  }
+
   async function loadPrs() {
     const out = S.ui.prOut;
+    const n = begin("prlist");
     try {
       const prs = await api("/api/prs");
-      clear(out).append(panel("Open reviews", { count: prs.length, flush: true },
-        prs.length
-          ? table(["#", "Title", "Base → Head", "State", "Approvals", ""], prs.map((p) =>
-              h("tr", {}, h("td", { class: "m" }, p.id), h("td", {}, p.title),
-                h("td", { class: "m" }, p.base + " → " + p.head),
-                h("td", {}, statusChip(p.state)),
-                h("td", { class: "num" }, p.approvals),
-                h("td", {}, h("button", { class: "ghost", type: "button",
-                  onclick: () => showPr(p.id) }, "Open")))))
-          : empty("No pull requests recorded.")),
-        h("div", { id: "pr-detail" }));
+      if (!current("prlist", n)) return;
+      clear(out).append(prPanel(prs), h("div", { id: "pr-detail" }));
       if (S.review.selected) showPr(S.review.selected);
       else if (prs.length) showPr(prs[0].id);
     } catch (e) {
@@ -1022,13 +1088,16 @@
     }
   }
 
-  async function showPr(id) {
+  async function showPr(id, notice, quiet) {
     S.review.selected = id;
     const box = byId("pr-detail");
     if (!box) return;
-    clear(box).append(loading("Loading PR #" + id));
+    if (!quiet) clear(box).append(loading("Loading PR #" + id));  // quiet: redraw in place, no flicker
+    const n = begin("pr");
     try {
       const p = await api("/api/prs/" + id);
+      if (!current("pr", n)) return;
+      const restore = rescue("pr-text", "pr-author");
       const st = p.status;
       const by = p.impact && p.impact.summary ? p.impact.summary.by_class : {};
       const crit = (p.impact ? p.impact.findings : [])
@@ -1036,7 +1105,15 @@
 
       const comment = h("textarea", { id: "pr-text", rows: 2, placeholder: "Leave a note",
         style: "flex:1 1 240px" });
-      const author = h("input", { id: "pr-author", placeholder: "your name", size: 12 });
+      const author = S.me.authenticated ? null
+        : h("input", { id: "pr-author", placeholder: "your name", size: 12 });
+      const myName = () => (S.me.authenticated ? S.me.identity : (author.value || "").trim());
+      const needName = () => {
+        if (S.me.authenticated || myName()) return false;
+        author.focus();
+        return true;
+      };
+      const merged = p.state === "merged";
 
       clear(box).append(panel("PR #" + p.id + " · " + p.title, {
         extra: h("span", { class: "count" },
@@ -1044,10 +1121,14 @@
       },
         h("div", { class: "verdict " + (crit.length ? "critical" : "clean") },
           h("div", {},
-            h("div", { class: "vtitle" }, st.ready_for_merge
-              ? "Approved — but " + plural(st.critical_findings.length, "critical finding") +
-                " still open"
-              : "Not ready: " + plural(st.approvals, "approval")),
+            h("div", { class: "vtitle" }, merged
+              ? "Merged into " + p.merged_into + " by " + p.merged_by
+              : st.ready_for_merge
+                ? (st.critical_findings.length
+                  ? "Approved — but " + plural(st.critical_findings.length, "critical finding") +
+                    " still open"
+                  : "Ready to merge")
+                : "Not ready: " + (st.blockers.join("; ") || "closed")),
             crit.length
               ? h("div", { class: "vdetail" }, crit.map((f) =>
                   h("div", {}, f.id + " · " + f.title)))
@@ -1065,21 +1146,41 @@
               h("dt", {}, "Base"), h("dd", { title: p.base }, shortHash(p.base, 16)),
               h("dt", {}, "Head"), h("dd", { title: p.head }, shortHash(p.head, 16)),
               h("dt", {}, "State"), h("dd", {}, p.state),
-              h("dt", {}, "Approvals"), h("dd", {}, (p.approvals || []).map((a) =>
-                a.by + " (" + when(a.at) + ")").join(", ") || "none")),
+              h("dt", {}, "Approvals"), h("dd", {},
+                st.approvals + " of " + st.required_approvals +
+                (st.signed_approvals_required ? " (signed only)" : "") + " — " +
+                ((p.approvals || []).map((a) => a.by + (a.verified ? " ✓ signed" : "") +
+                  " (" + when(a.at) + ")").join(", ") || "none"))),
             h("div", { class: "toolbar", style: "margin-top:12px" },
               h("button", { class: "primary", type: "button", onclick: () => {
                 S.cmp.a = p.base; S.cmp.b = p.head; location.hash = "#/compare";
               } }, "Open in Compare"),
-              h("button", { type: "button", onclick: async (e) => {
-                const who = author.value.trim();
-                if (!who) { author.focus(); return; }
-                e.target.disabled = true;
-                try { await api("/api/prs/" + p.id + "/approvals", { json: { by: who } }); }
-                catch (err) { alert(err.message); }
-                e.target.disabled = false;
-                showPr(p.id);
-              } }, "Approve as"),
+              p.state === "open" ? h("button", { type: "button", disabled: !can("writer"),
+                title: can("writer") ? "" : "readers cannot approve",
+                onclick: async (e) => {
+                  if (needName()) return;
+                  e.target.disabled = true;
+                  let failed = null;
+                  try {
+                    await api("/api/prs/" + p.id + "/approvals" + actorQuery(myName()),
+                      { json: { by: myName() } });
+                  } catch (err) { failed = err; }
+                  showPr(p.id, failed);
+                } }, S.me.authenticated ? "Approve as " + S.me.identity : "Approve as") : null,
+              p.state === "open" ? h("button", { class: "primary", type: "button",
+                disabled: !(st.ready_for_merge && can("maintainer")),
+                title: !can("maintainer") ? "merging needs the maintainer role (you are " +
+                  S.me.role + ")" : st.ready_for_merge ? "fast-forward " + (p.base_ref || "base") +
+                  " to the head" : st.blockers.join("; "),
+                onclick: async (e) => {
+                  if (needName()) return;
+                  e.target.disabled = true;
+                  let failed = null;
+                  try { await api("/api/prs/" + p.id + "/merge" + actorQuery(myName()), { method: "POST" }); }
+                  catch (err) { failed = err; }
+                  await showPr(p.id, failed);
+                  refreshPrList();
+                } }, "Merge (fast-forward)") : null,
               author)),
           h("div", {},
             h("h3", { style: "margin:0 0 4px;font:600 10.5px/1 var(--mono);letter-spacing:.09em;" +
@@ -1095,16 +1196,150 @@
                 const txt = comment.value.trim();
                 if (!txt) { comment.focus(); return; }
                 e.target.disabled = true;
+                let failed = null;
                 try {
                   await api("/api/prs/" + p.id + "/comments",
-                    { json: { author: author.value.trim() || "unknown", text: txt } });
-                } catch (err) { alert(err.message); }
-                e.target.disabled = false;
-                showPr(p.id);
+                    { json: { author: S.me.authenticated ? S.me.identity : myName() || "unknown",
+                      text: txt } });
+                } catch (err) { failed = err; }
+                showPr(p.id, failed);
               } }, "Comment"))))));
+      restore();
+      if (notice) box.prepend(errBox(notice));
     } catch (e) {
       clear(box).append(errBox(e));
     }
+  }
+
+  /* Refresh only the list above the detail (state chips, counts), leaving the detail in place. */
+  async function refreshPrList() {
+    const n = begin("prlist");
+    try {
+      const prs = await api("/api/prs");
+      const out = S.ui.prOut;
+      if (!current("prlist", n) || !out || !byId("pr-detail")) return;
+      const detail = byId("pr-detail");
+      detail.remove();
+      clear(out).append(prPanel(prs), detail);
+    } catch (e) { /* the detail pane is still correct; the next event refreshes the list */ }
+  }
+
+  /* ---------------------------------------------------------------- locks */
+
+  function locksView(main) {
+    const path = h("input", { id: "lk-path", placeholder: "firmware/driver.conf", size: 30 });
+    const hours = h("input", { id: "lk-hours", type: "number", value: "4", min: "1", max: "72",
+      style: "width:5em" });
+    const note = h("input", { id: "lk-note", placeholder: "why you need it", size: 22 });
+    const who = S.me.authenticated ? null
+      : h("input", { id: "lk-who", placeholder: "your name", size: 12 });
+    const out = h("div", { id: "lk-out" }, loading("Loading locks"));
+    const msg = h("div", { id: "lk-msg" });
+    mount(main,
+      h("div", { class: "view-head" },
+        h("h1", {}, "File locks"),
+        h("p", {}, "A PCB layout or a CAD file cannot be merged, so VCM locks instead: one holder " +
+          "at a time, with an expiry. While you hold a lock, other people's commits and pushes " +
+          "that touch that file are refused." +
+          (S.store.backend === "appwrite"
+            ? " Locks live in the shared Appwrite table, so everyone on the team sees this list."
+            : " Locks are local to this repository; use the Appwrite store to share them."))),
+      panel("Take a lock", {}, h("div", { class: "toolbar" },
+        field("Path", path), field("Hours", hours), field("Note", note),
+        who ? field("You", who) : null,
+        h("button", { class: "primary", type: "button", disabled: !can("writer"),
+          title: can("writer") ? "" : "readers cannot take locks",
+          onclick: () => takeLock(path, hours, note, who) }, "Lock")), msg),
+      out,
+      h("div", { id: "lk-feed" }));
+    S.ui.lkOut = out;
+    S.ui.lkMsg = msg;
+    loadLocks();
+    renderFeed();
+  }
+
+  const lockName = (who) => (S.me.authenticated ? S.me.identity : (who && who.value.trim()) || "");
+
+  async function takeLock(path, hours, note, who) {
+    const name = lockName(who), p = path.value.trim();
+    if (!p) { path.focus(); return; }
+    if (!S.me.authenticated && !name) { who.focus(); return; }
+    clear(S.ui.lkMsg);
+    try {
+      await api("/api/locks" + actorQuery(name), { json: {
+        path: p, ttl: Math.max(1, Number(hours.value) || 4) * 3600, note: note.value.trim() } });
+      path.value = ""; note.value = "";
+      loadLocks();
+    } catch (e) {
+      clear(S.ui.lkMsg).append(errBox(e));
+    }
+  }
+
+  async function dropLock(lock, force) {
+    const name = lockName(byId("lk-who"));
+    if (!S.me.authenticated && !name) { byId("lk-who").focus(); return; }
+    clear(S.ui.lkMsg);
+    try {
+      await api("/api/locks" + "?path=" + encodeURIComponent(lock.path) +
+        (force ? "&force=true" : "") + (S.me.authenticated || !name ? "" : "&by=" +
+        encodeURIComponent(name)), { method: "DELETE" });
+      loadLocks();
+    } catch (e) {
+      clear(S.ui.lkMsg).append(errBox(e));
+    }
+  }
+
+  async function loadLocks() {
+    const out = S.ui.lkOut;
+    if (!out) return;
+    const n = begin("locks");
+    try {
+      const locks = await api("/api/locks");
+      if (!current("locks", n)) return;
+      const me = S.me.authenticated ? S.me.identity : lockName(byId("lk-who"));
+      clear(out).append(panel("Active locks", { count: locks.length, flush: true },
+        locks.length
+          ? table(["Path", "Held by", "Expires", "Note", ""], locks.map((lk) => {
+              const mine = lk.holder === me;
+              return h("tr", {},
+                h("td", { class: "m" }, lk.path),
+                h("td", {}, lk.holder, mine ? h("span", { class: "count" }, "  you") : null),
+                h("td", { class: "m" }, when(lk.expires_at)),
+                h("td", {}, lk.note || ""),
+                h("td", {}, mine
+                  ? h("button", { class: "ghost", type: "button",
+                      onclick: () => dropLock(lk, false) }, "Release")
+                  : h("button", { class: "ghost", type: "button", disabled: !can("maintainer"),
+                      title: can("maintainer") ? "break someone else's lock"
+                        : "breaking another holder's lock needs the maintainer role",
+                      onclick: () => { if (window.confirm("Break " + lk.holder + "'s lock on " +
+                        lk.path + "?")) dropLock(lk, true); } }, "Break")));
+            }))
+          : empty("No files are locked.")));
+    } catch (e) {
+      clear(out).append(errBox(e));
+    }
+  }
+
+  /* ------------------------------------------------------------- activity */
+
+  const ACTION = { created: "created", updated: "updated", deleted: "removed" };
+  const KIND = { prs: "pull request", releases: "release", devices: "unit", locks: "lock" };
+
+  function renderFeed() {
+    const box = byId("lk-feed");
+    if (!box) return;
+    const items = S.feed.slice(-25).reverse();
+    clear(box).append(panel("Recent activity", { count: items.length, extra:
+      h("span", { class: "count" }, liveLabel()) },
+      items.length
+        ? h("ul", { class: "feed" }, items.map((e) => h("li", {},
+            h("span", { class: "t" }, when(e.at)),
+            h("span", {}, (KIND[e.kind] || e.kind) + " "),
+            h("b", { class: "mono" }, e.kind === "locks" ? "" : e.name),
+            h("span", {}, " " + (ACTION[e.action] || e.action)),
+            e.actor ? h("span", { class: "who" }, "  by " + e.actor) : null)))
+        : empty("Nothing has changed yet.")));
   }
 
   /* -------------------------------------------------------------- history */
@@ -1164,6 +1399,7 @@
     lineage: lineageView,
     releases: releasesView,
     review: reviewView,
+    locks: locksView,
     history: historyView,
   };
 
@@ -1182,6 +1418,116 @@
     } catch (e) {
       main.append(errBox(e));
     }
+  }
+
+  /* ----------------------------------------------------------------- live */
+
+  /* Two ways to hear about changes, both ending in the same place: ask the VCM API what changed.
+     Polling always works. If the operator opted in to Appwrite Realtime, a WebSocket to Appwrite
+     (events table only: no record content, no key) makes it instant and the poll slows down.
+     Browser-side payloads are never trusted; they only cue a refetch from our own API. */
+  const live = { mode: "off", cursor: "", timer: null, ws: null, retry: null, dirty: false };
+
+  const liveLabel = () => ({ realtime: "live · Appwrite Realtime", polling: "live · polling",
+    off: "not live" })[live.mode];
+
+  function setLive(mode) {
+    live.mode = mode;
+    const dot = byId("live-dot"), txt = byId("live-txt");
+    if (dot) dot.className = "dot " + (mode === "off" ? "down" : "up");
+    if (txt) txt.textContent = liveLabel();
+    renderFeed();
+    clearTimeout(live.timer);
+    if (mode !== "off") live.timer = setTimeout(pollEvents, mode === "realtime" ? 30000 : 4000);
+  }
+
+  function refreshView() {
+    const main = byId("main"), a = document.activeElement;
+    const typing = a && main && main.contains(a) && /^(INPUT|TEXTAREA)$/.test(a.tagName) && a.value;
+    if (typing) { live.dirty = true; return; }  // never replace a form someone is filling in
+    live.dirty = false;
+    if (S.view === "locks") loadLocks();
+    else if (S.view === "review") { refreshPrList(); if (S.review.selected) showPr(S.review.selected, null, true); }
+    else if (S.view === "releases") loadReleases();
+  }
+
+  async function pollEvents() {
+    try {
+      const first = live.cursor === "";
+      const r = await api("/api/events?after=" + encodeURIComponent(live.cursor));
+      live.cursor = r.cursor || live.cursor || "0";
+      if (r.events.length) {
+        S.feed = S.feed.concat(r.events).slice(-200);
+        renderFeed();
+        if (!first) refreshView();
+      }
+      setLive(live.ws && live.ws.readyState === 1 ? "realtime" : "polling");
+    } catch (e) {
+      if (e.status === 401) return signIn();
+      setLive("off");
+      live.timer = setTimeout(pollEvents, 10000);
+    }
+  }
+
+  function openRealtime(cfg) {
+    if (!cfg || !cfg.enabled || !("WebSocket" in window)) return;
+    const base = cfg.endpoint.replace(/^http/, "ws").replace(/\/+$/, "");
+    const url = base + "/realtime?project=" + encodeURIComponent(cfg.project) +
+      cfg.channels.map((c) => "&channels[]=" + encodeURIComponent(c)).join("");
+    try {
+      const ws = new WebSocket(url);
+      live.ws = ws;
+      ws.onopen = () => setLive("realtime");
+      ws.onmessage = (m) => {
+        let d = null;
+        try { d = JSON.parse(m.data); } catch (e) { return; }
+        const p = d && d.data && d.data.payload;
+        if (d && d.type === "event" && (!p || !p.scope || p.scope === cfg.scope)) pollEvents();
+      };
+      const lost = () => {
+        live.ws = null;
+        if (live.mode === "realtime") setLive("polling");
+        clearTimeout(live.retry);
+        live.retry = setTimeout(() => openRealtime(cfg), 15000);
+      };
+      ws.onclose = lost;
+      ws.onerror = () => ws.close();
+    } catch (e) { /* blocked (CSP, offline): polling keeps working */ }
+  }
+
+  function startLive() {
+    clearTimeout(live.timer);
+    if (live.ws) { live.ws.onclose = null; live.ws.close(); live.ws = null; }
+    live.cursor = "";
+    S.feed = [];
+    pollEvents();
+    openRealtime(S.store.realtime);
+  }
+
+  /* -------------------------------------------------------------- sign-in */
+
+  function signIn(message) {
+    clearTimeout(live.timer);
+    setLive("off");
+    clear(byId("repo-meta")).append(h("span", {}, h("span", { class: "dot down" }), " signed out"));
+    const input = h("input", { id: "tok", type: "password", autocomplete: "current-password",
+      placeholder: "access token", size: 34 });
+    const go = async () => {
+      if (!input.value.trim()) { input.focus(); return; }
+      token.set(input.value.trim());
+      boot();
+    };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+    mount(clear(byId("main")),
+      h("section", { class: "panel signin" },
+        h("header", {}, h("h2", {}, "Sign in")),
+        h("div", { class: "body" },
+          h("p", {}, "This VCM API needs an access token. Ask whoever started it, or see " +
+            "VCM_API_TOKENS. The token stays in this tab only and is sent to this server alone."),
+          message ? errBox({ message }) : null,
+          h("div", { class: "toolbar" }, input,
+            h("button", { class: "primary", type: "button", onclick: go }, "Sign in")))));
+    input.focus();
   }
 
   /* ----------------------------------------------------------------- boot */
@@ -1222,13 +1568,31 @@
       h("span", { title: info.head }, h("span", { class: "k" }, "head "),
         shortHash(info.head, 10)),
       h("span", {}, h("span", { class: "k" }, "tags "),
-        Object.keys(info.tags || {}).join(" ") || "—"));
+        Object.keys(info.tags || {}).join(" ") || "—"),
+      h("span", { title: "where releases, units, reviews and locks are stored" },
+        h("span", { class: "k" }, "store "), S.store.backend +
+        (S.store.scope ? " / " + S.store.scope : "")),
+      h("span", {}, h("span", { class: "k" }, "you "),
+        S.me.authenticated
+          ? [S.me.identity, " ", h("span", { class: "rolechip" }, S.me.role)]
+          : h("span", { style: "color:var(--sv-warning)" }, "no auth")),
+      h("span", {}, h("span", { id: "live-dot", class: "dot down" }), " ",
+        h("span", { id: "live-txt" }, liveLabel())),
+      S.me.authenticated
+        ? h("button", { class: "ghost", type: "button", onclick: () => {
+            token.clear(); signIn(); } }, "Sign out")
+        : null);
   }
 
+  let booted = false;
+
   async function boot() {
-    initTheme();
+    if (!booted) initTheme();
     try {
       const health = await api("/api/health").catch(() => null);
+      const me = await api("/api/whoami");  // the first call that needs a token
+      S.me = { identity: me.identity, role: me.role, authenticated: !!me.authenticated };
+      S.store = await api("/api/store").catch(() => S.store);
       const [info, revs, devices] = await Promise.all([
         api("/api/repo"), api("/api/timeline"), api("/api/devices").catch(() => []),
       ]);
@@ -1240,9 +1604,11 @@
       S.lineage.rev = S.cmp.b || "HEAD";
       S.lineage.ref = S.lineage.ref || exampleRef();
       repoMeta(info, health && health.status === "ok");
-      window.addEventListener("hashchange", route);
+      if (!booted) { window.addEventListener("hashchange", route); booted = true; }
       route();
+      startLive();
     } catch (e) {
+      if (e.status === 401) return signIn(token.get() ? "That token was not accepted." : undefined);
       clear(byId("repo-meta")).append(
         h("span", {}, h("span", { class: "dot down" }), " api unreachable"));
       mount(clear(byId("main")),

@@ -37,6 +37,37 @@ EDGE_INDEXES: dict[str, tuple[list[str], list[int]]] = {
     "edge_rev_dst": (["rev", "dst", "type"], [64, 191, 32]),
 }
 
+# ---- shared records: releases, devices, pull requests, locks (see vcm_core.records) -------------
+RECORDS = "vcm_records"
+EVENTS = "vcm_events"
+
+RECORD_COLUMNS: dict[str, tuple[str, int, bool]] = {
+    "scope": ("varchar", 64, True),     # one team/project per scope, so projects can share a database
+    "kind": ("varchar", 32, True),
+    "name": ("varchar", 256, True),
+    "body": ("mediumtext", 0, True),    # a PR carries its diff and impact report: can exceed 64 kB
+    "updated_at": ("varchar", 32, True),
+}
+
+# A change feed with no payload: what changed, never the content. It is the one table that may be
+# made publicly readable (opt-in) so a browser can subscribe to Appwrite Realtime without a key.
+EVENT_COLUMNS: dict[str, tuple[str, int, bool]] = {
+    "scope": ("varchar", 64, True),
+    "at": ("varchar", 32, True),
+    "kind": ("varchar", 32, True),
+    "name": ("varchar", 256, True),
+    "action": ("varchar", 16, True),
+    "actor": ("varchar", 128, False),
+}
+
+RECORD_INDEXES: dict[str, tuple[list[str], list[int]]] = {
+    "rec_scope_kind": (["scope", "kind"], [64, 32]),
+}
+
+EVENT_INDEXES: dict[str, tuple[list[str], list[int]]] = {
+    "evt_scope_at": (["scope", "at"], [64, 32]),
+}
+
 SQLITE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS nodes(rev TEXT, id TEXT, type TEXT, name TEXT, props TEXT,
                                  PRIMARY KEY(rev, id));

@@ -158,6 +158,17 @@ rather than claiming none ran.
   syncs `releases/` and `devices/` as create-only records (release signatures are unioned). PRs,
   evidence-index conflicts and S3/HTTP/SSH are not handled.
 - Locks (`vcm_core/locks.py`) are advisory and enforced only in `Repository.commit` and `push`.
+- **Records are pluggable** (`vcm_core/records.py`). Releases, devices, PRs and locks go through
+  `repo.records` (`save_record` / `load_record` / `record_exists` / `list_records`); never open
+  `.vcm/releases` etc. directly, or the Appwrite backend is silently bypassed. Every backend needs an
+  *exclusive* `create` (that is the lock primitive) and an `events()` feed. `vcm_graph` registers
+  the `appwrite` backend on import, so anything selecting it must import `vcm_graph` (the CLI and API
+  do). Appwrite rows are scoped (`appwrite_scope`); rows without a matching scope are invisible.
+- **The change feed must never carry record content**, and `vcm_events` is the only table that may be
+  world-readable (opt-in, for Realtime). Do not add fields to events without re-checking that.
+- Dashboard JS: any loader that can be refreshed by a live event must use `begin`/`current` (latest
+  request wins) and `rescue` (keep typed input), or a late response overwrites newer state. The UI
+  is covered by `tests/test_dashboard_ui.py` (Playwright; skips if Node/Playwright are absent).
 - `Repository.fast_forward` is the only way a branch moves other than `commit`; it refuses
   divergence and requires a clean tree when the branch is checked out. PR merge and pull use it.
 - Revision history is **first-parent only**. No merge.
@@ -175,7 +186,7 @@ engineering.
 | 6 | No API auth | ~1 day | **done** — bearer tokens, fail-closed, 127.0.0.1 default, identity bound to token. Roles done. Open: per-repo permissions, TLS, rotation, audit log |
 | 3 | Hand-made KiCad fixtures | ~2–3 days | open |
 | 1 | Schematic nets not traced | ~1–2 weeks | open |
-| 4 | Single-user, no remotes | ~2–3 weeks | **largely addressed** — filesystem remotes (push/pull/clone, fast-forward only), file locks, protected branches, PR merge (fast-forward), plus the shared Appwrite graph backend. Open: S3/HTTP transports, PR sync, required-reviewer lists. Merge is still deliberately not planned |
+| 4 | Single-user, no remotes | ~2–3 weeks | **largely addressed** — filesystem remotes (push/pull/clone, fast-forward only), file locks, protected branches, PR merge (fast-forward), plus the shared Appwrite graph backend and shared records/locks/PRs on Appwrite. Open: S3/HTTP transports, PR sync, required-reviewer lists. Merge is still deliberately not planned |
 
 **Remaining order: 3, then 1 — 3 de-risks 1 by supplying real files.** (6 and 5 are done; 4 is largely done.)
 

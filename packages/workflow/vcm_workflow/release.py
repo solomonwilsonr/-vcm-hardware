@@ -63,7 +63,7 @@ def create_release(repo: Repository, name: str, rev: str = "HEAD", out: str | Pa
                    run_kicad: bool = False) -> dict:
     if not NAME_RE.match(name):
         raise VcmError(f"invalid release name: {name!r}")
-    if (repo.dir / "releases" / f"{name}.json").exists():
+    if repo.record_exists("releases", name):
         raise VcmError(f"release already exists: {name}")
     revision = repo.get_revision(rev)
     val = validate_revision(repo, revision.id, run_kicad=run_kicad, attach=True)

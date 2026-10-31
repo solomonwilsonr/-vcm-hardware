@@ -14,6 +14,7 @@ from vcm_core import Repository, VcmError
 from vcm_core.signing import load_trustdb
 from vcm_diff import diff_revisions, render_text
 from vcm_graph import build_graph
+from vcm_graph.backends.appwrite_records import realtime_config
 from vcm_trace import (
     affected_by_component,
     affected_by_revision,
@@ -131,6 +132,19 @@ def create_app(repo_path: str | None = None, *, tokens: dict[str, str] | None = 
     @app.get("/api/health")
     def health():
         return {"status": "ok"}
+
+    @app.get("/api/store")
+    def store():
+        be = repo().records
+        return {"backend": be.name, "scope": getattr(be, "scope", None),
+                "realtime": realtime_config(scope=getattr(be, "scope", None))}
+
+    @app.get("/api/events")
+    def events(after: str = ""):
+        """What changed since ``after`` (kind, name, action, actor; never content). The dashboard
+        polls this, or uses it as the cue to refetch when Appwrite Realtime fires."""
+        evs = repo().records.events(after)
+        return {"events": evs, "cursor": evs[-1]["at"] if evs else after}
 
     @app.get("/api/whoami")
     def whoami(request: Request):

@@ -146,3 +146,19 @@ def test_remote_lock_and_merge_flow(cli_repo, capsys, tmp_path, monkeypatch):
     (tmp_path / "clone" / "firmware" / "driver.conf").write_text("again\n")
     assert run(capsys, clone, "commit", "-m", "direct")[0] == 1  # protected
     assert run(capsys, clone, "config", "required_approvals", "1")[0] == 0
+
+
+def test_records_status_events_and_config(cli_repo, capsys, monkeypatch):
+    monkeypatch.setenv("VCM_AUTHOR", "alice")
+    assert run(capsys, cli_repo, "release", "create", "R1", "--rev", "v1.0")[0] == 0
+    assert run(capsys, cli_repo, "lock", "a.txt")[0] == 0
+    code, out = run(capsys, cli_repo, "records", "status", "--json")
+    info = json.loads(out)
+    assert code == 0 and info["backend"] == "local" and info["counts"]["releases"] == 1
+    assert info["locks"] == 1 and info["realtime"] is False
+    code, out = run(capsys, cli_repo, "events")
+    assert "releases/" in out and "locks/" in out and "alice" in out
+    assert run(capsys, cli_repo, "config", "records_backend", "appwrite")[0] == 0
+    assert run(capsys, cli_repo, "config", "records_backend", "mongo")[0] == 1
+    assert run(capsys, cli_repo, "config", "appwrite_scope", "team-a")[0] == 0
+    assert run(capsys, cli_repo, "config", "appwrite_scope")[1].strip() == "team-a"

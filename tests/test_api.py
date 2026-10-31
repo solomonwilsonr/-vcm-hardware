@@ -159,3 +159,20 @@ def test_dashboard_surfaces_catalog_coverage(client):
 
 def test_static_mount_rejects_traversal(client):
     assert client.get("/static/../app.py").status_code in (301, 307, 400, 404)
+
+
+def test_store_and_event_feed(client):
+    assert client.get("/api/store").json()["backend"] == "local"
+    assert client.get("/api/store").json()["realtime"] == {"enabled": False}
+    first = client.get("/api/events").json()
+    assert first["events"] == []
+    client.post("/api/locks?by=alice", json={"path": "a.txt"})
+    client.post("/api/releases", json={"name": "R1", "rev": "v1.0"})
+    feed = client.get("/api/events").json()
+    assert [(e["kind"], e["action"]) for e in feed["events"]] == [("locks", "created"),
+                                                                  ("releases", "created")]
+    assert feed["events"][0]["actor"] == "alice" and "expires_ts" not in str(feed)
+    assert client.get("/api/events", params={"after": feed["cursor"]}).json()["events"] == []
+    client.delete("/api/locks", params={"path": "a.txt", "by": "alice"})
+    after = client.get("/api/events", params={"after": feed["cursor"]}).json()["events"]
+    assert [(e["kind"], e["action"]) for e in after] == [("locks", "deleted")]

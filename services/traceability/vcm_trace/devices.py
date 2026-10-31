@@ -24,13 +24,14 @@ def register_device(repo: Repository, serial: str, release: str, batch: str = ""
     if not SERIAL_RE.match(serial):
         raise VcmError(f"invalid serial: {serial!r}")
     rel = repo.load_record("releases", release)  # raises if the release does not exist
-    if (repo.dir / "devices" / f"{serial}.json").exists():
+    if repo.record_exists("devices", serial):
         raise VcmError(f"device already registered: {serial}")
     payload = f"{base_url()}/{serial}"
     record = {"serial": serial, "release": release, "revision": rel["revision"], "batch": batch,
               "notes": notes, "registered_at": now_iso(), "qr_payload": payload}
     repo.save_record("devices", serial, record)
     svg = repo.dir / "devices" / f"{serial}.svg"
+    svg.parent.mkdir(parents=True, exist_ok=True)  # the QR is derivable; keep a local copy to print
     svg.write_text(qr_svg(payload))
     return {**record, "qr_svg": str(svg)}
 

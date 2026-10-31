@@ -422,6 +422,44 @@ def cmd_locks(args) -> int:
     return 0
 
 
+def cmd_records(args) -> int:
+    from vcm_core.records import LocalRecords, copy_records
+    from vcm_graph.backends.appwrite_records import AppwriteRecords, realtime_config
+    repo = _repo(args)
+    if args.records_cmd == "status":
+        be = repo.records
+        info = {"backend": be.name, "scope": getattr(be, "scope", None),
+                "counts": {k: len(be.names(k)) for k in ("releases", "devices", "prs")},
+                "locks": len(repo.locks.list()),
+                "realtime": realtime_config(scope=getattr(be, "scope", None))["enabled"]}
+        _dump(info) if args.json else print(
+            f"records backend: {info['backend']}" + (f" (scope {info['scope']})" if info["scope"] else "")
+            + f"\n  releases {info['counts']['releases']}, devices {info['counts']['devices']}, "
+            f"PRs {info['counts']['prs']}, active locks {info['locks']}"
+            f"\n  realtime for browsers: {'on' if info['realtime'] else 'off (dashboard polls)'}")
+    elif args.records_cmd == "provision":
+        done = appwrite_provision(public_events=True if args.realtime else None)
+        print(f"Appwrite schema ready: {len(done['created'])} created, {len(done['existed'])} present"
+              + ("; events table is publicly readable (Realtime)" if args.realtime else ""))
+    elif args.records_cmd == "migrate":
+        rep = copy_records(LocalRecords(repo.dir), AppwriteRecords(
+            scope=repo.config().get("appwrite_scope")))
+        _dump(rep) if args.json else print(
+            f"copied {len(rep['copied'])}, already there {len(rep['skipped'])}, "
+            f"conflicts {len(rep['conflicts'])}" + ("".join(f"\n  CONFLICT {c}" for c in rep["conflicts"])))
+        return 1 if rep["conflicts"] else 0
+    return 0
+
+
+def cmd_events(args) -> int:
+    evs = _repo(args).records.events(args.after or "")
+    if args.json:
+        _dump(evs)
+    for e in evs:
+        print(f"{e['at']}  {e['kind']}/{e['name']}  {e['action']}  {e['actor'] or '-'}")
+    return 0
+
+
 def cmd_protect(args) -> int:
     repo = _repo(args)
     cfg = repo.config()
@@ -447,9 +485,20 @@ def cmd_config(args) -> int:
         repo.save_config(cfg)
         print(f"{args.key} = {args.value}")
         return 0
+    if args.key == "records_backend" and args.value in ("local", "appwrite"):
+        cfg[args.key] = args.value
+        repo.save_config(cfg)
+        print(f"{args.key} = {args.value}")
+        return 0
+    if args.key == "appwrite_scope" and args.value:
+        cfg[args.key] = args.value
+        repo.save_config(cfg)
+        print(f"{args.key} = {args.value}")
+        return 0
     if args.key != "required_approvals" or not args.value.isdigit() or int(args.value) < 1:
         raise VcmError("settable keys: required_approvals (integer >= 1), "
-                       "require_signed_approvals (true|false)")
+                       "require_signed_approvals (true|false), records_backend (local|appwrite), "
+                       "appwrite_scope (text)")
     cfg[args.key] = int(args.value)
     repo.save_config(cfg)
     print(f"{args.key} = {args.value}")
@@ -757,6 +806,21 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--remote")
     s = add("locks", cmd_locks, "list active locks", True)
     s.add_argument("--remote")
+
+    rc = sub.add_parser("records", help="where releases, devices, PRs and locks live (local or Appwrite)")
+    rc = rc.add_subparsers(dest="records_cmd", required=True)
+    s = rc.add_parser("status")
+    s.set_defaults(fn=cmd_records)
+    s.add_argument("--json", action="store_true")
+    s = rc.add_parser("provision", help="create the Appwrite tables for shared records")
+    s.set_defaults(fn=cmd_records)
+    s.add_argument("--realtime", action="store_true",
+                   help="make the payload-free events table publicly readable for browser Realtime")
+    s = rc.add_parser("migrate", help="copy local records into Appwrite (never overwrites)")
+    s.set_defaults(fn=cmd_records)
+    s.add_argument("--json", action="store_true")
+    s = add("events", cmd_events, "recent changes to releases, devices, PRs and locks", True)
+    s.add_argument("--after", help="only events after this timestamp")
 
     pc = sub.add_parser("protect", help="protect branches: change them only via merged PRs")
     pc = pc.add_subparsers(dest="protect_cmd", required=True)

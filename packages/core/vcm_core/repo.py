@@ -34,6 +34,7 @@ class Repository:
         if not self.dir.is_dir():
             raise VcmError(f"not a vcm repository: {self.root}")
         self.store = ObjectStore(self.dir / "objects")
+        self._records: dict[str, object] = {}
 
     # ---- lifecycle -------------------------------------------------
     @classmethod
@@ -66,7 +67,7 @@ class Repository:
     @property
     def locks(self):
         from .locks import LockStore  # lazy: locks imports this module
-        return LockStore(self.dir / "locks")
+        return LockStore(self.records)
 
     def protected_branches(self) -> list[str]:
         return list(self.config().get("protected_branches", []))
@@ -334,23 +335,31 @@ class Repository:
         return {**data, "_evidence": hist[-1]}
 
     # ---- named JSON records (releases, devices, pull requests) -----
-    def _record_path(self, kind: str, name: str) -> Path:
+    @property
+    def records(self):
+        """The active record backend: local files by default, or a shared store (see records.py)."""
+        from .records import ENV, open_backend  # lazy: records imports this module
+        key = os.environ.get(ENV) or self.config().get("records_backend") or "local"
+        if key not in self._records:
+            self._records[key] = open_backend(self)
+        return self._records[key]
+
+    def _record_name(self, kind: str, name: str) -> str:
         if not name or name.startswith(".") or any(c in name for c in "/\\\0"):
             raise VcmError(f"invalid {kind[:-1]} name: {name!r}")
-        return self.dir / kind / f"{name}.json"
+        return name
 
-    def save_record(self, kind: str, name: str, data: dict) -> Path:
-        p = self._record_path(kind, name)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
-        return p
+    def save_record(self, kind: str, name: str, data: dict) -> None:
+        self.records.put(kind, self._record_name(kind, name), data)
 
     def load_record(self, kind: str, name: str) -> dict:
-        p = self._record_path(kind, name)
-        if not p.is_file():
+        rec = self.records.get(kind, self._record_name(kind, name))
+        if rec is None:
             raise VcmError(f"no such {kind[:-1]}: {name}")
-        return json.loads(p.read_text())
+        return rec
+
+    def record_exists(self, kind: str, name: str) -> bool:
+        return self.records.get(kind, self._record_name(kind, name)) is not None
 
     def list_records(self, kind: str) -> list[dict]:
-        base = self.dir / kind
-        return [json.loads(p.read_text()) for p in sorted(base.glob("*.json"))] if base.is_dir() else []
+        return self.records.list(kind)

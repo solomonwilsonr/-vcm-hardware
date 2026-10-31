@@ -71,7 +71,7 @@ every unit whose change still has critical findings.
 | 17 | Change review records | `packages/workflow` | **Partial**: diff, impact, validation, comments, approvals, policy-aware readiness, identity via API tokens. No merge action |
 | 18 | Time machine (`timeline`, `explain`) | `packages/workflow` | **Implemented** |
 | 19 | CLI, REST API, dashboard | `packages/vcm-cli`, `services/api` | **Implemented**. The API requires a token (roles: viewer, editor, approver, admin) and refuses to start without one unless `--insecure` |
-| 20 | Agent access: MCP server (stdio, offline) with read-only tools and a propose-then-human-approves write path | `services/mcp-server` (`vcm_mcp`) | **Implemented**. Tested over a real stdio subprocess; **not yet exercised with a live agent client**. No approval page in the dashboard yet |
+| 20 | Agent access: MCP server (stdio, offline) with read-only tools and a propose-then-human-approves write path | `services/mcp-server` (`vcm_mcp`) | **Implemented**. Tested over a real stdio subprocess; **not yet exercised with a live agent client**. The dashboard's **Agents** page lists proposals and lets a signed-in approver approve or reject them (the API refuses agents, the proposer and unauthenticated callers) |
 | 21 | Agent honesty: claim checker (`vcm_check_claims`) and evals (`vcm eval`) | `vcm_ai.claims`, `vcm_mcp.evals` | **Implemented**. Evals have been run only against reference answerers (one honest, five deliberately flawed), **never against a live model** |
 | 22 | Integrations and apps: KiCad plugin, FreeCAD, Git bridge, web app, desktop app | `integrations/`, `apps/` | **Planned**: README stubs only |
 
@@ -519,8 +519,9 @@ verified. It is a floor, not a census: a rule may use inputs it does not cite in
 - The MCP server is tested against the protocol (including a real stdio subprocess) but has not
   been driven by a live agent client here. An agent's reasoning is only as good as VCM's data: it
   inherits every limitation above, and an agent can still misread a result, which is why each
-  finding carries its confidence class and evidence. Proposals are approved from the CLI or API;
-  there is no dashboard page for them yet.
+  finding carries its confidence class and evidence. Proposals are approved from the CLI, the API or the dashboard's
+  Agents page; the dashboard needs an API token with the approver role to decide (insecure mode
+  cannot).
 - Integrations (KiCad, FreeCAD, Git bridge), the web app and the desktop app are not implemented.
 
 ## Repository map

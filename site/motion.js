@@ -43,6 +43,14 @@
     n.style.setProperty("--k", i);
   });
 
+  /* Flow: nodes and packets take turns, left to right. */
+  [].slice.call(document.querySelectorAll("[data-flow] .fnode")).forEach(function (n, i) {
+    n.style.setProperty("--n", i);
+  });
+  [].slice.call(document.querySelectorAll("[data-flow] .fwire")).forEach(function (w, i) {
+    w.style.setProperty("--n", i);
+  });
+
   /* Scroll progress bar, throttled to animation frames. */
   var bar = document.querySelector(".progress i");
   if (bar) {
@@ -128,7 +136,7 @@
   /* --------------------------------------------------------------- replay */
 
   var targets = [].slice.call(document.querySelectorAll(
-    "[data-reveal], [data-steps], .term, .blast, .sync, .meter, .ring-svg, [data-count]"));
+    "[data-reveal], [data-steps], [data-flow], .term, .blast, .sync, .meter, .ring-svg, [data-count]"));
 
   function play(el) {
     if (el.classList.contains("in")) return;

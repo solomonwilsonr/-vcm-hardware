@@ -739,3 +739,5 @@ ul.held ul { list-style: none; padding-left: 0; margin-top: 4px; display: grid; 
 @media (max-width: 640px) {
   .wbar { grid-template-columns: 3em minmax(0, 1fr) 5.5em; gap: 6px; }
 }
+
+[hidden] { display: none !important; }

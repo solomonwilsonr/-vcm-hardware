@@ -168,3 +168,15 @@ def test_dashboard_ships_the_fleet_view(client):
     for endpoint in ("/api/fleet/power", "/api/fleet/rollout", "/api/fleet/query"):
         assert endpoint in js
     assert "fleet: fleetView" in js
+
+
+def test_dashboard_has_an_agents_page_that_cannot_propose(client):
+    """Agents propose, people decide: the page lists proposals and forwards a decision, and the
+    dashboard has no code path that creates a proposal."""
+    page = client.get("/").text
+    js = client.get("/static/app.js").text
+    assert 'data-view="agents"' in page
+    assert "function agentsView(" in js and '"/api/proposals"' in js
+    assert '"/approve"' in js or '"approve"' in js
+    # nothing in the dashboard posts a new proposal
+    assert 'api("/api/proposals", {' not in js and "/api/proposals\", { json" not in js

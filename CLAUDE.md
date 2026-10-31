@@ -292,5 +292,5 @@ well-defined operation, and real hardware teams don't do it — they lock.
 KiCad and FreeCAD plugins, the Git bridge, the web app and the desktop app (`integrations/`, `apps/`)
 are README stubs. Remotes have no network transport (a shared directory only). The live Redfish
 and NetBox fetchers have never been run against real services. The MCP server has been driven only by
-tests and a scripted client, never a live agent; proposals have no dashboard page. "GPU Git" for GPUOS/VACE (`docs/gpu-git.md`) is a scope document only. Hardware
+tests and a scripted client, never a live agent; the dashboard has an Agents page that lists proposals and forwards an approver's decision to the API. "GPU Git" for GPUOS/VACE (`docs/gpu-git.md`) is a scope document only. Hardware
 pull requests are **partial**: a local review record with no merge action, identity or permissions.

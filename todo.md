@@ -37,6 +37,7 @@ See [docs/hackathon.md](docs/hackathon.md) for the pitch and the 90-second demo 
 - [ ] **(you)** Run `vcm inventory fetch-redfish` against a real BMC
 - [ ] **(you)** Run `vcm fleet netbox --url ...` against a real NetBox
 - [ ] **(you)** Run `vcm eval run` against a live agent (evals have only met scripted answerers)
+- [ ] **(you)** Connect a real MCP client (for example Claude) to `vcm mcp`, file a proposal, and approve it on the dashboard's Agents page
 
 ## 4. Housekeeping
 
@@ -58,7 +59,7 @@ Scope each one before starting. Do not describe any of them as working until the
 - [ ] KiCad integration (`integrations/kicad`)
 - [ ] Git bridge (`integrations/git`)
 - [ ] Remote transport beyond a shared directory (S3 or Git)
-- [ ] Dashboard page for agent proposals
+- [x] Dashboard page for agent proposals (Agents page; still needs a live agent client run)
 - [ ] Hardware pull requests: merge action, identity and permissions (currently a local review record)
 - [ ] "GPU Git" for GPUOS/VACE (`docs/gpu-git.md` is a scope document only)
 

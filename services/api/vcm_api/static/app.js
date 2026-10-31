@@ -1040,6 +1040,113 @@
     }
   }
 
+
+  /* --------------------------------------------------------------- agents */
+
+  /* Agents propose; people decide. This page only *shows* proposals and forwards a person's
+     decision to the API, which refuses an agent, the proposer, and any unauthenticated caller.
+     Everything an agent wrote (rationale, arguments) is rendered as text, never as markup. */
+
+  const MCP_SNIPPET = '{"mcpServers": {"vcm": {"command": "vcm", "args": ["-C", "/path/to/repo", "mcp"]}}}';
+
+  function agentsView(main) {
+    const out = h("div", { id: "ag-out" }, loading("Loading proposals"));
+    const filter = select("ag-filter", [
+      { value: "pending", label: "Pending" }, { value: "", label: "All" },
+      { value: "approved", label: "Approved" }, { value: "rejected", label: "Rejected" },
+    ], "pending", () => loadProposals());
+    mount(main,
+      h("div", { class: "view-head" },
+        h("h1", {}, "Agents"),
+        h("p", {}, "An AI agent can read everything VCM knows and can only propose a change. " +
+          "Nothing below happens until a named person approves it here. An agent can never " +
+          "approve or reject, and nobody can decide their own proposal.")),
+      out);
+    S.ui.agOut = out;
+    S.ui.agFilter = filter;
+    loadProposals();
+  }
+
+  async function loadProposals() {
+    const out = S.ui.agOut;
+    try {
+      const all = await api("/api/proposals");
+      const want = S.ui.agFilter.value;
+      const shown = all.filter((p) => !want || p.status === want)
+        .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+      const n = (st) => all.filter((p) => p.status === st).length;
+      clear(out).append(
+        h("div", { class: "stats" },
+          stat(n("pending"), "pending", n("pending") ? "bad" : null),
+          stat(n("approved"), "approved"),
+          stat(n("rejected"), "rejected")),
+        panel("Proposals", { count: shown.length, extra: S.ui.agFilter },
+          shown.length
+            ? h("div", {}, shown.map(proposalCard))
+            : empty(all.length
+                ? "Nothing with that status."
+                : "No proposals yet. When an agent connected over MCP asks for a change, it " +
+                  "appears here with its reason, for a person to decide.")),
+        panel("Connect an agent", {},
+          h("p", { class: "empty", style: "margin:0 0 10px" },
+            "VCM serves an MCP server over stdio. It is offline, needs no API key and opens no " +
+            "sockets. Add it to your MCP client's config, for example `.mcp.json`:"),
+          h("pre", { class: "mono", style: "margin:0;overflow-x:auto" }, MCP_SNIPPET),
+          h("p", { class: "empty", style: "margin:10px 0 0" },
+            "Read tools cannot change anything. The only write is a proposal. Signing, catalog " +
+            "reviews, policy overrides and pushing are not available to an agent at all. Not yet " +
+            "driven by a live agent client: it has been tested over the protocol only.")));
+    } catch (e) {
+      clear(out).append(errBox(e));
+    }
+  }
+
+  function proposalCard(p) {
+    const isAgent = String(p.proposer || "").startsWith("agent:");
+    const reason = h("input", { type: "text", placeholder: "reason (optional)",
+      "aria-label": "Reason for rejecting " + p.id, style: "min-width:200px" });
+    const msg = h("p", { class: "err", style: "margin:8px 0 0", hidden: true });
+    const decide = async (what, btn) => {
+      btn.disabled = true; msg.hidden = true;
+      try {
+        await api("/api/proposals/" + p.id + "/" + what,
+          { json: what === "reject" ? { reason: reason.value.trim() } : {} });
+        loadProposals();
+      } catch (err) {
+        msg.textContent = err.message; msg.hidden = false; btn.disabled = false;
+      }
+    };
+    const args = Object.keys(p.args || {}).sort().map((k) => {
+      const v = String(p.args[k]);
+      return h("span", { class: "mono", title: v, style: "margin-right:14px;display:inline-block" },
+        k + "=" + (/^[0-9a-f]{40,}$/.test(v) ? shortHash(v, 12) : v));
+    });
+    const pending = p.status === "pending";
+    return h("div", { class: "proposal", style: "padding:14px 0;border-top:1px solid var(--line)" },
+      h("div", { class: "vmeta", style: "display:flex;gap:10px;flex-wrap:wrap;align-items:center" },
+        h("b", { class: "mono" }, p.id),
+        h("span", { class: "mono", style: "border:1px solid var(--line-2);border-radius:999px;" +
+          "padding:2px 10px;font-size:11px;letter-spacing:.06em;text-transform:uppercase" },
+          p.status),
+        h("span", { class: "mono" }, p.action),
+        h("span", { class: "count mono", title: p.proposer },
+          (isAgent ? "agent " : "") + "proposed by " + p.proposer + " · " + when(p.created_at))),
+      h("div", { style: "margin:6px 0" }, p.summary),
+      h("blockquote", { style: "margin:6px 0;padding-left:12px;border-left:2px solid var(--line-2);" +
+        "color:var(--fg-dim)" }, p.rationale),
+      h("div", {}, args),
+      !pending
+        ? h("p", { class: "empty", style: "margin:8px 0 0" },
+            p.status + " by " + (p.decided_by || "?") + " · " + when(p.decided_at) +
+            (p.reason ? " · " + p.reason : ""))
+        : h("div", { class: "toolbar", style: "margin-top:10px" },
+            h("button", { class: "primary", type: "button",
+              onclick: (e) => decide("approve", e.target) }, "Approve"),
+            reason,
+            h("button", { type: "button", onclick: (e) => decide("reject", e.target) }, "Reject")),
+      msg);
+  }
+
   /* --------------------------------------------------------------- review */
 
   function reviewView(main) {
@@ -1479,6 +1586,7 @@
     lineage: lineageView,
     releases: releasesView,
     review: reviewView,
+    agents: agentsView,
     fleet: fleetView,
     history: historyView,
   };

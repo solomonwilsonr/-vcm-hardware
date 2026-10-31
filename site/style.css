@@ -513,3 +513,35 @@ h1 .wd { display: inline-block; }
   .js .steps:not(.in) .stepn { opacity: 1; }
   .progress { display: none; }
 }
+
+
+/* agents: proposal flow */
+.flow { display: flex; align-items: center; gap: 0; margin-top: 8px; }
+.fnode {
+  flex: 0 0 auto; width: 188px; padding: 18px 16px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface); text-align: center;
+}
+.fnode b { display: block; font-weight: 500; font-size: 16px; margin-bottom: 6px; }
+.fnode span { color: var(--fg-dim); font-size: 13px; line-height: 1.5; }
+.fnode.person { border-color: #4cc472; }
+.fwire { flex: 1 1 0; min-width: 24px; height: 1px; background: var(--line); position: relative; }
+.fwire i {
+  position: absolute; top: -3px; left: 0; width: 7px; height: 7px; border-radius: 50%;
+  background: #a8e08a; box-shadow: 0 0 10px rgba(168, 224, 138, 0.8);
+}
+.js .flow.in .fwire i { animation: packet 3.6s linear infinite; animation-delay: calc(var(--n, 0) * 0.9s); }
+.js .flow:not(.in) .fwire i { opacity: 0; }
+@keyframes packet { 0% { left: 0; opacity: 0; } 12% { opacity: 1; } 88% { opacity: 1; } 100% { left: calc(100% - 7px); opacity: 0; } }
+.js .flow.in .fnode { animation: nodeGlow 3.6s ease-in-out infinite; animation-delay: calc(var(--n, 0) * 0.9s); }
+@keyframes nodeGlow { 0%, 22%, 100% { box-shadow: none; } 8% { box-shadow: 0 0 0 1px rgba(76,196,114,0.5), 0 0 24px rgba(76,196,114,0.15); } }
+@media (max-width: 860px) {
+  .flow { flex-direction: column; align-items: stretch; }
+  .fnode { width: auto; }
+  .fwire { flex: 0 0 28px; width: 1px; height: 28px; margin: 0 auto; }
+  .fwire i { left: -3px; top: 0; }
+  @keyframes packet { 0% { top: 0; opacity: 0; } 12% { opacity: 1; } 88% { opacity: 1; } 100% { top: 21px; opacity: 0; } }
+}
+@media (prefers-reduced-motion: reduce) {
+  .js .flow.in .fwire i, .js .flow.in .fnode { animation: none !important; }
+  .js .flow:not(.in) .fwire i { opacity: 1; }
+}

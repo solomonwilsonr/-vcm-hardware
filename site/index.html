@@ -21,6 +21,7 @@
       <a href="#blast">Blast radius</a>
       <a href="#trust">Confidence</a>
       <a href="#fleet">Fleet</a>
+      <a href="#agents">Agents</a>
       <a href="#limits">Limitations</a>
     </nav>
     <div class="navcta">
@@ -325,6 +326,38 @@
       With a per-clone registry, this is exactly where a recall quietly under-reports &mdash; and a
       recall is the one question you cannot get half right.
     </p>
+  </div>
+</section>
+
+<section id="agents">
+  <div class="wrap">
+    <div class="label" data-reveal>Agents</div>
+    <h2 data-reveal style="--d:60ms">Agents propose. People decide.</h2>
+    <p class="sub" data-reveal style="--d:110ms">
+      Connect an AI agent over MCP and it can read everything VCM knows: diffs, impact reports,
+      drift, the fleet. What it can write is a proposal, and nothing more. A named person
+      decides, and the audit log records who.
+    </p>
+    <div class="flow" data-flow aria-label="An agent files a proposal, a person approves it, and the audit log records it.">
+      <div class="fnode"><b>Agent</b><span>reads freely<br>proposes with a reason</span></div>
+      <div class="fwire"><i></i></div>
+      <div class="fnode"><b>Proposal</b><span>pending, prechecked<br>against the repository</span></div>
+      <div class="fwire"><i></i></div>
+      <div class="fnode person"><b>Person</b><span>approves or rejects<br>never the proposer</span></div>
+      <div class="fwire"><i></i></div>
+      <div class="fnode"><b>Audit log</b><span>hash-chained<br>names the approver</span></div>
+    </div>
+    <div class="cards" style="margin-top:34px" data-stagger="90">
+      <div class="card"><h3>Read-only by construction</h3>
+        <p>Every tool but one cannot change anything. A test fails if a tool name contains
+           approve, sign, commit, push or lock.</p></div>
+      <div class="card"><h3>Checked before it is believed</h3>
+        <p>A claim checker recomputes the report from the repository, so an agent cannot quote a
+           finding that does not exist or upgrade a guess to a fact.</p></div>
+      <div class="card honest"><h3>Not yet driven by a live agent</h3>
+        <p>It has been tested over the protocol and a scripted client. The evals have only met
+           reference answerers. The dashboard's Agents page is where a person decides.</p></div>
+    </div>
   </div>
 </section>
 

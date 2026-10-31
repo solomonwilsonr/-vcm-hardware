@@ -1481,6 +1481,9 @@
 
   /* ----------------------------------------------------------------- boot */
 
+  // null is "auto": the polar look, which also follows prefers-color-scheme for light.
+  const THEMES = [null, "light", "terminal"];
+
   function applyTheme(t) {
     if (t) document.documentElement.setAttribute("data-theme", t);
     else document.documentElement.removeAttribute("data-theme");
@@ -1490,13 +1493,17 @@
     let saved = null;
     try { saved = localStorage.getItem("vcm-theme"); } catch (e) { saved = null; }
     // ?theme=dark|light forces a theme, for demos and screenshots.
+    // ?theme=auto|light|terminal forces a theme, for demos and screenshots. A missing param
+    // must not count as a match: THEMES contains null, and includes(null) would be true.
     const forced = new URLSearchParams(location.search).get("theme");
-    if (forced === "dark" || forced === "light") saved = forced;
+    if (forced === "auto") saved = null;
+    else if (forced && THEMES.includes(forced)) saved = forced;
     applyTheme(saved);
     const btn = byId("theme");
     btn.addEventListener("click", () => {
+      // auto (polar) -> light -> terminal -> auto
       const cur = document.documentElement.getAttribute("data-theme");
-      const next = cur === "dark" ? "light" : cur === "light" ? null : "dark";
+      const next = THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length];
       applyTheme(next);
       try {
         if (next) localStorage.setItem("vcm-theme", next);

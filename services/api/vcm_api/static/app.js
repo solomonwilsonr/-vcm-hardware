@@ -242,8 +242,25 @@
       h("div", { class: "body" + (o.flush ? " flush" : "") }, body));
   }
 
+  // Plain-language hover text for the numbers, so a first-time reader is never left guessing.
+  const STAT_HINTS = {
+    "components changed": "Parts that were replaced or had a value changed between the two revisions.",
+    "form factors": "Parts whose slot or form factor changed. This usually means physical rework.",
+    "repositioned": "Parts that moved to a different position.",
+    "line items": "Quantity changes: the same part, more or fewer of it.",
+    "connections": "Power domains, PCIe roots or fabrics that were added, removed or changed.",
+    "files": "Pinned files (firmware, docs, inventory) that were added, removed or modified.",
+    "findings": "Everything the impact analysis reported, across all severities.",
+    "critical": "Problems to fix before this change is rolled out.",
+    "catalog values checked": "Catalog values a named person has verified against a datasheet.",
+    "catalog": "Share of the changed parts that the component catalog knows about.",
+    "validation": "Built-in checks, before and after the change."
+  };
+
   function stat(n, label, tone) {
-    return h("div", { class: "stat" + (n === 0 || n === "0" ? " zero" : "") },
+    const hint = STAT_HINTS[label];
+    return h("div", Object.assign({ class: "stat" + (n === 0 || n === "0" ? " zero" : "") },
+        hint ? { title: hint } : {}),
       h("div", { class: "n" + (tone ? " " + tone : "") }, n),
       h("div", { class: "l" }, label));
   }
@@ -1519,7 +1536,8 @@
     mount(box,
       h("span", {}, h("span", { class: "dot " + (ok ? "up" : "down") }), " ",
         h("span", { class: "k" }, "api "), ok ? "ok" : "down"),
-      h("span", {}, h("span", { class: "k" }, "repo "), info.path),
+      h("span", { title: info.path }, h("span", { class: "k" }, "repo "),
+        String(info.path || "").replace(/\/+$/, "").split("/").pop() || info.path),
       h("span", {}, h("span", { class: "k" }, "branch "), info.branch || "detached"),
       h("span", { title: info.head }, h("span", { class: "k" }, "head "),
         shortHash(info.head, 10)),

@@ -11,17 +11,17 @@
 :root:not([data-theme="light"]):not([data-theme="terminal"]) {
   color-scheme: dark;
 
-  --bg: #000000;
-  --bg-grid: #08080a;
-  --panel: #0b0b0d;
-  --panel-2: #0f0f12;
-  --line: #1c1c21;
-  --line-2: #2c2c34;
-  --fg: #fafafa;
-  --fg-dim: #8b8b94;
-  --fg-faint: #5c5c66;
+  --bg: #141414;
+  --bg-grid: #101010;
+  --panel: #1a1a1a;
+  --panel-2: #161616;
+  --line: #2a2a2a;
+  --line-2: #3b3b3b;
+  --fg: #f4f4f2;
+  --fg-dim: #a1a1a1;
+  --fg-faint: #707070;
   --accent: #ffffff;
-  --accent-dim: #26262e;
+  --accent-dim: #2e2e2e;
   --focus: #ffffff;
 
   /* Confidence — cool hues, lifted just enough to hold contrast on true black. */
@@ -48,7 +48,7 @@
 /* The whole restyle hangs off this guard so the other themes are untouched. */
 :root:not([data-theme="light"]):not([data-theme="terminal"]) body {
   background:
-    radial-gradient(900px 420px at 50% -220px, #141418 0%, rgba(20, 20, 24, 0) 70%),
+    radial-gradient(1000px 380px at 50% -200px, rgba(76, 196, 114, 0.14) 0%, rgba(76, 196, 114, 0) 70%),
     var(--bg);
   letter-spacing: -0.005em;
 }
@@ -57,7 +57,7 @@
 
 :root:not([data-theme="light"]):not([data-theme="terminal"]) .topbar {
   padding: 14px 22px;
-  background: rgba(0, 0, 0, 0.72);
+  background: rgba(20, 20, 20, 0.80);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line);
 }
@@ -313,4 +313,37 @@
 :root:not([data-theme="light"]):not([data-theme="terminal"]) .repo-meta {
   max-width: 62%;
   justify-content: flex-end;
+}
+
+
+/* ===== Match the landing page: pill controls, green stripe, no-wrap numbers ===== */
+/* Green is decorative only here. Interactive accents stay neutral so that green keeps meaning
+   "verified" and nothing else (confidence and severity colours are untouched). */
+
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .topbar {
+  border-image: linear-gradient(90deg, #1f8f5a, #a8e08a 50%, #1f8f5a) 1;
+  border-bottom-width: 2px;
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .brand b {
+  display: inline-flex; align-items: center; gap: 8px; font-weight: 500;
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .brand b::before {
+  content: ""; width: 16px; height: 16px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 4l3 8 3-8' stroke='%234cc472' stroke-width='1.8' fill='none'/%3E%3Cpath d='M12 4v8' stroke='%23a8e08a' stroke-width='1.8'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) button {
+  border-radius: 999px; padding: 7px 16px; font-weight: 500;
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) button.primary {
+  background: var(--fg); color: #141414; border-color: var(--fg);
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) button.primary:hover:not(:disabled) {
+  background: #fff; color: #141414;
+}
+:root:not([data-theme="light"]):not([data-theme="terminal"]) button.ghost { padding: 5px 12px; }
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .view-head h1 { font-weight: 300; }
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .stat .n { white-space: nowrap; }
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .stat[title] { cursor: help; }
+:root:not([data-theme="light"]):not([data-theme="terminal"]) .repo-meta span[title] {
+  text-decoration: underline dotted var(--line-2); text-underline-offset: 3px;
 }

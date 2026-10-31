@@ -5,61 +5,67 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>VCM &mdash; version control for datacenter hardware</title>
 <meta name="description" content="Commit a node's configuration, see what a change breaks, and trace which physical units are affected. Every finding says how much to trust it.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230d1117'/%3E%3Cpath d='M3 4l3 8 3-8' stroke='%234493f8' stroke-width='1.6' fill='none'/%3E%3Cpath d='M11 4v8' stroke='%233fb950' stroke-width='1.6'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23141414'/%3E%3Cpath d='M3 4l3 8 3-8' stroke='%234cc472' stroke-width='1.6' fill='none'/%3E%3Cpath d='M11 4v8' stroke='%23a8e08a' stroke-width='1.6'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 
+<div class="announce"><span>New: confidence labels on every finding</span><i></i><a href="#trust">See how it works &rsaquo;</a></div>
 <header class="site">
   <div class="wrap">
-    <a class="logo" href="#top">VCM</a>
+    <a class="logo" href="#top"><svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4l3 8 3-8" stroke="#4cc472" stroke-width="1.8" fill="none"/><path d="M12 4v8" stroke="#a8e08a" stroke-width="1.8"/></svg> VCM</a>
     <nav>
       <a href="#change">What changed</a>
       <a href="#blast">Blast radius</a>
       <a href="#trust">Confidence</a>
       <a href="#fleet">Fleet</a>
       <a href="#limits">Limitations</a>
-      <a href="https://github.com/solomonwilsonr/-vcm-hardware">GitHub</a>
     </nav>
+    <div class="navcta">
+      <a class="pill" href="https://github.com/solomonwilsonr/-vcm-hardware#readme">README</a>
+      <a class="pill solid" href="https://github.com/solomonwilsonr/-vcm-hardware">View on GitHub</a>
+    </div>
   </div>
 </header>
 
 <main id="main">
 
 <div class="hero" id="top">
-  <div class="wrap">
-    <span class="eyebrow rise"><span class="dot"></span> Open source &middot; Apache-2.0 &middot; runs offline</span>
-    <h1 class="rise" style="--d:70ms">Every hardware change has a <span class="accent">blast radius</span>.</h1>
+  <div class="wrap frame">
+    <span class="eyebrow rise">Version control for datacenter hardware</span>
+    <h1 class="rise" style="--d:70ms">Every hardware change has a blast&nbsp;radius.</h1>
     <p class="lede rise" style="--d:140ms">
-      VCM is version control for datacenter hardware. Commit a node's configuration the way you
-      commit code, and it tells you what the change breaks, which physical units are affected, and
-      how much to trust every single thing it says.
+      Commit a node's configuration the way you commit code. VCM tells you what the change breaks,
+      which physical units are affected, and how much to trust every single thing it says.
     </p>
     <div class="cta rise" style="--d:210ms">
-      <a class="btn primary" href="https://github.com/solomonwilsonr/-vcm-hardware">View on GitHub</a>
-      <a class="btn ghost" href="#fleet">How the fleet works</a>
-      <span class="note">no network at runtime</span>
+      <a class="pill solid big" href="https://github.com/solomonwilsonr/-vcm-hardware">View on GitHub</a>
+      <a class="pill big" href="#fleet">How the fleet works</a>
     </div>
-    <div class="term ">
-      <div class="bar"><i></i><i></i><i></i><span>vcm impact v1.0 v1.1</span></div>
-<pre><span class="ln"><span class="dim"># 8x NVIDIA A100 PCIe 40GB  &rarr;  8x NVIDIA H100 NVL 94GB</span></span>
-<span class="ln"><span class="dim"># the manifest diff is eight replaced line items. this is what it means:</span></span>
-<span class="ln"></span>
-<span class="ln"><span class="hi">Findings:</span> <span class="v">verified 8</span>, <span class="r">rule_based 9</span>, <span class="s">speculative 4</span>   <span class="dim">| critical 4, warning 10, info 7</span></span>
-<span class="ln"></span>
-<span class="ln"><span class="c">[!! CRITICAL]</span> <span class="r">R001</span>  PSU_BANK cannot supply the node under its redundancy policy</span>
-<span class="ln">            4 supplies totalling 8000 W installed, <span class="hi">4000 W usable</span> under 2+2.</span>
-<span class="ln">            Declared draw <span class="hi">4190 W</span>. Losing a supply would drop the node.</span>
-<span class="ln"></span>
-<span class="ln"><span class="c">[!! CRITICAL]</span> <span class="r">R006</span>  Installed accelerator driver is below the required minimum</span>
-<span class="ln">            Node declares <span class="hi">470.223.02</span>; H100 NVL requires <span class="hi">525.60.13</span>.</span>
-<span class="ln"></span>
-<span class="ln"><span class="c">[!! CRITICAL]</span> <span class="v">V007</span>  The base configuration does not match the machine it describes</span>
-<span class="ln">            Observed by redfish, nvidia-smi: DIMM11 not reported by the machine.</span>
-<span class="ln"></span>
-<span class="ln"><span class="w">[ ! WARNING]</span> <span class="r">R007</span>  Power connector changed: 8-pin EPS &rarr; 12VHPWR on 8 devices<span class="cursor"></span></span></pre>
+
+    <div class="stage rise" style="--d:280ms">
+      <div class="bands" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <div class="demo" id="demo">
+        <div class="demo-cmd"><span class="dim">$</span> vcm impact v1.0 v1.1
+          <span class="dim"> &nbsp;# 8&times; A100 PCIe 40GB &rarr; 8&times; H100 NVL 94GB</span></div>
+        <div class="demo-out" id="demo-out" aria-live="polite"></div>
+        <div class="demo-chips" role="tablist" aria-label="Findings from the same change">
+          <button class="chipb on" role="tab" data-k="power">Power</button>
+          <button class="chipb" role="tab" data-k="driver">Drivers</button>
+          <button class="chipb" role="tab" data-k="conn">Connectors</button>
+          <button class="chipb" role="tab" data-k="drift">Drift</button>
+        </div>
+        <div class="demo-foot">
+          <span class="demo-note">Real findings from the bundled sample node. Offline, no network.</span>
+          <button class="pill solid" id="demo-run" type="button">&#9654; Run</button>
+        </div>
+      </div>
     </div>
+  </div>
+  <div class="wrap frame strip">
+    <span>Reads</span><b>Redfish</b><b>nvidia-smi</b><b>NetBox</b><b>node manifests</b>
+    <span>Stores in</span><b>local files</b><b>Appwrite TablesDB</b>
   </div>
 </div>
 
@@ -364,5 +370,6 @@
 </footer>
 
 <script src="motion.js"></script>
+<script src="demo.js"></script>
 </body>
 </html>

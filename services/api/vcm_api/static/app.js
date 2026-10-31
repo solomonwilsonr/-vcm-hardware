@@ -731,7 +731,8 @@
   function fleetPanel(ref, fleet) {
     if (!fleet.length) {
       return panel("Built units carrying " + ref, { count: 0 },
-        empty("No registered device records include " + ref + "."));
+        empty("No registered unit carries " + ref + " yet. Register one against a release with " +
+          "`vcm device register SERIAL --release NAME`, then trace again."));
     }
     const groups = new Map();
     for (const d of fleet) {
@@ -906,7 +907,9 @@
       const rels = await api("/api/releases");
       const units = {};
       S.devices.forEach((d) => { units[d.release] = (units[d.release] || 0) + 1; });
-      clear(out).append(panel("Releases", { count: rels.length, flush: true },
+      clear(out).append(panel("Releases", { count: rels.length, flush: !!rels.length },
+        !rels.length ? empty("No releases yet. Pin a revision with " +
+          "`vcm release create NAME --rev REV`, and it will appear here to verify and roll back.") :
         table(["Name", "Revision", "Created", "Validation", "manifest sha256", "Units", ""],
           rels.map((r) => h("tr", {},
             h("td", { class: "m" }, r.name),
@@ -1066,7 +1069,8 @@
                 h("td", { class: "num" }, p.approvals),
                 h("td", {}, h("button", { class: "ghost", type: "button",
                   onclick: () => showPr(p.id) }, "Open")))))
-          : empty("No pull requests recorded.")),
+          : empty("No pull requests yet. Open one with " +
+            "`vcm pr open --base REV --head REV --title TEXT`; a person then approves it here.")),
         h("div", { id: "pr-detail" }));
       if (S.review.selected) showPr(S.review.selected);
       else if (prs.length) showPr(prs[0].id);

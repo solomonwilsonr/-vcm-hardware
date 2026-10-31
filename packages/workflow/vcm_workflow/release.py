@@ -9,7 +9,15 @@ import sys
 from pathlib import Path
 
 import vcm_core
-from vcm_core import Repository, VcmError, canonical_json, now_iso, sha256_bytes, sha256_file
+from vcm_core import (
+    Repository,
+    VcmError,
+    canonical_json,
+    now_iso,
+    sha256_bytes,
+    sha256_file,
+    signing,
+)
 from vcm_validation import validate_revision
 from vcm_validation.kicad_cli import kicad_version
 
@@ -50,8 +58,12 @@ def _scalar(v) -> str:
     return json.dumps(v)
 
 
+# Fields outside the digest: the digest itself, and signatures (which sign the digest).
+_UNHASHED = ("manifest_sha256", "signatures")
+
+
 def _manifest_hash(manifest: dict) -> str:
-    body = {k: v for k, v in manifest.items() if k != "manifest_sha256"}
+    body = {k: v for k, v in manifest.items() if k not in _UNHASHED}
     return sha256_bytes(canonical_json(body))
 
 
@@ -94,8 +106,29 @@ def load_manifest(repo: Repository, name_or_path: str) -> dict:
     return repo.load_record("releases", name_or_path)
 
 
-def verify_release(repo: Repository, name_or_path: str, worktree: bool = False) -> dict:
-    """Re-check manifest self-hash, revision object, every artifact blob and (optionally) the working tree."""
+def sign_release(repo: Repository, name: str, key: str, out: str | Path | None = None) -> dict:
+    """Add ``key``'s signature over the manifest digest to the stored release (and ``out``)."""
+    m = repo.load_record("releases", name)
+    if m.get("manifest_sha256") != _manifest_hash(m):
+        raise VcmError(f"release {name} does not match its recorded hash; refusing to sign it")
+    sig = signing.make_signature(key, m["manifest_sha256"])
+    m["signatures"] = [s for s in m.get("signatures", []) if s.get("key_id") != key] + [sig]
+    repo.save_record("releases", name, m)
+    if out:
+        Path(out).write_text(json.dumps(m, indent=2, sort_keys=True) + "\n")
+    if key not in signing.load_trust(repo):
+        m["_warning"] = f"key {key!r} is not in trustdb.json yet: run `vcm key trust {key}`"
+    return m
+
+
+def verify_release(repo: Repository, name_or_path: str, worktree: bool = False,
+                   require_signed: bool = False) -> dict:
+    """Re-check manifest self-hash, revision object, every artifact blob and (optionally) the working tree.
+
+    Signatures are checked when present: each must verify and come from a key in ``trustdb.json``.
+    ``require_signed`` also fails an unsigned release. Without it, unsigned releases still pass:
+    stripping signatures is only detectable when the caller demands them.
+    """
     m = load_manifest(repo, name_or_path)
     checks: list[dict] = []
 
@@ -117,6 +150,16 @@ def verify_release(repo: Repository, name_or_path: str, worktree: bool = False) 
     for path, a in sorted(m["artifacts"].items()):
         ok = repo.store.verify(a["hash"])
         check(f"artifact:{path}", ok, "" if ok else "blob missing or hash mismatch")
+    sigs = m.get("signatures") or []
+    trust = signing.load_trust(repo) if sigs else {}
+    signed_by = []
+    for sig in sigs:
+        ok, detail = signing.check_signature(sig, m.get("manifest_sha256", ""), trust)
+        check(f"signature:{sig.get('key_id', '?')}", ok, detail)
+        if ok:
+            signed_by.append(sig["key_id"])
+    if require_signed and not sigs:
+        check("signature", False, "release is unsigned but a signature is required")
     if worktree:
         for path, a in sorted(m["artifacts"].items()):
             f = repo.root / path
@@ -124,4 +167,4 @@ def verify_release(repo: Repository, name_or_path: str, worktree: bool = False) 
             check(f"worktree:{path}", ok, "" if ok else "working file differs from release")
     problems = [c for c in checks if not c["ok"]]
     return {"release": m["name"], "revision": rid, "ok": not problems, "checks": checks,
-            "problems": problems}
+            "problems": problems, "signed_by": signed_by}

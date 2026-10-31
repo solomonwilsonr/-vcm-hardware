@@ -17,7 +17,7 @@ The MVP described in the README exists: local repositories, KiCad/BOM parsing, s
 
 - Grow the component DB (importable from CSV/JSON, versioned, with source attribution per value).
 - More rules: connector pinout, decoupling per power pin, net voltage propagation, DNP handling, firmware pin-map checks.
-- Release signing (for example Sigstore or minisign style detached signatures) and signed device passports.
+- Signed device passports, key revocation/expiry, passphrase-protected or hardware-backed keys (release signing itself is done: Ed25519, `vcm release sign`).
 - Evidence ingestion: attach bench results, lab reports and CI outputs to revisions and link them to graph tests.
 
 ## Phase 3 (weeks 7-9): collaboration

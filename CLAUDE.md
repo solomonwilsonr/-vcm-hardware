@@ -22,7 +22,7 @@ tested (`examples/demo-pcb.sh`, `tests/test_impact.py`) — it is simply no long
 Do not reintroduce PCB vocabulary into user-facing strings.
 
 Current state: a working MVP, 141 passing tests, Appwrite TablesDB live. The mechanism is built end
-to end; the *knowledge* (catalog) and *trust* (no signatures, no auth) are still demo-grade.
+to end; the *knowledge* (catalog) and *trust* (opt-in signatures, static-token auth) are still demo-grade.
 
 ## Commands
 
@@ -116,7 +116,10 @@ rather than claiming none ran.
   no laid-out PCB yields no connectivity at all.
 - **`manifest_sha256` is computed over canonical JSON with that field excluded**
   (`_manifest_hash` in `packages/workflow/vcm_workflow/release.py`). Any new manifest field is
-  automatically covered — and is the right hook for detached signatures.
+  automatically covered. Signatures sign that digest and live in `signatures`, which is **also**
+  excluded from the hash (it can't sign itself). Signing is opt-in: an unsigned release passes plain
+  `verify`, so only `--require-signed` catches a stripped signature. A valid signature from a key
+  absent from `trustdb.json` fails verification — never treat "verifies" as "trusted".
 - **Reference resolution in KiCad 7+ lives in `instances`**, not the `Reference` property;
   `parse_schematic` overrides the property with it. Power symbols (`#`-prefixed refs) are skipped.
 - **The catalog is layered, and lookups go through it, never a module global.**
@@ -146,13 +149,13 @@ engineering.
 | # | Gap | Effort | Status |
 |---|-----|--------|--------|
 | 2 | Component DB has 4 parts | ~1–2 days | **largely done** — 54 parts, layered catalog, CSV import, coverage disclosure. Remaining: per-value attribution, and getting entries actually datasheet-reviewed |
-| 5 | No release signatures | ~1–2 days | open |
+| 5 | No release signatures | ~1–2 days | **done** — Ed25519 (pure Python, `vcm_core.ed25519`), `vcm key gen/trust/list`, `vcm release sign`, signature check in `verify_release`, committed `trustdb.json`. Remaining: signed passports, revocation/expiry, key passphrases/HSM |
 | 6 | No API auth | ~1 day | **done** — bearer tokens, fail-closed, `vcm serve` binds loopback, identity bound to token. Remaining: roles, token expiry, TLS |
 | 3 | Hand-made KiCad fixtures | ~2–3 days | open |
 | 1 | Schematic nets not traced | ~1–2 weeks | open |
 | 4 | Single-user, no remotes | ~2–3 weeks | **partly addressed** — the graph now has a shared Appwrite TablesDB backend (`vcm_graph.backends`). Devices and releases are still local JSON. Merge is still deliberately not planned |
 
-**Recommended order: ~~6~~, then 5, then 3 — 3 de-risks 1 by supplying real files.**
+**Recommended order: ~~6~~, ~~5~~, then 3 — 3 de-risks 1 by supplying real files.**
 
 ### 2. Component catalog — mostly built
 
@@ -170,17 +173,18 @@ Still open: per-value attribution (each field carrying its own `{"value", "sourc
 rather than one `source` per part), and getting entries genuinely datasheet-reviewed so
 `reviewed: true` means something.
 
-### 5. Release signing
+### 5. Release signing — built
 
-`manifest_sha256` is already the right digest to sign. Add `vcm key gen`, `vcm release sign <name>`,
-and a `signature` check inside `verify_release` alongside the existing ones. Ed25519 — optional
-`cryptography` dependency with a clear error when absent (or ~80 lines of pure-Python RFC 8032 to
-preserve the zero-dependency core). Public keys in a committed `trustdb.json` so verification is
-offline and the trust set is itself version-controlled. Sign device passports with the same key.
+Ed25519 in `vcm_core/ed25519.py` (pure Python RFC 8032, stdlib only, checked against the RFC
+vectors, not constant-time). `vcm_core/signing.py` holds keys (`$VCM_KEY_DIR`, default `~/.vcm/keys`,
+hex seed, 0600), the repo-root `trustdb.json` and the signature check. A signature covers
+`b"vcm-release-signature/1\n" + manifest_sha256`. CLI: `vcm key gen|trust|list`,
+`vcm release sign <name> --key K`, `vcm release verify --require-signed`.
 
-Today `release verify` only re-hashes: it catches accidental and naive tampering, but anyone who can
-rewrite both the manifest and the object store can forge a release. Hashes prove consistency, not
-authenticity.
+Still open: signed device passports (passports only *report* release-signature trust today), key
+revocation/expiry, passphrase-protected or hardware-backed keys, and making signatures mandatory
+by default. Hashes prove consistency; signatures prove authenticity only for releases that carry
+one and only against keys someone committed to `trustdb.json`.
 
 ### 6. API authentication
 

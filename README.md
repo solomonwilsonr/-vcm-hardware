@@ -81,6 +81,8 @@ vcm catalog coverage --rev v1.1               # what the catalog can actually re
 vcm validate --rev v1.1 --compare v1.0
 vcm release create R1 --rev v1.1              # pin hashes
 vcm release verify R1
+vcm key gen alice && vcm key trust alice        # once; commit trustdb.json
+vcm release sign R1 --key alice                 # then: vcm release verify R1 --require-signed
 vcm device register NODE-0001 --release R1 --batch RACK-12
 vcm device affected --component GPU0 --value "NVIDIA A100 PCIe 40GB"
 vcm rollback plan v1.0 --from v1.1
@@ -193,8 +195,13 @@ human has actually checked it.
   sample KiCad files are hand-generated and have not been opened in KiCad.
 - Single-user local repositories: no remotes, merge, locking, authentication or permissions outside
   the shared graph backend. Revision history is first-parent only.
-- Release verification detects accidental or naive tampering by re-hashing; there are no
-  signatures, so someone who can rewrite both manifest and store can forge a release.
+- Release signing is optional and opt-in. `vcm release sign` adds an Ed25519 signature over the
+  manifest digest, and `release verify` checks it against the committed `trustdb.json`. An unsigned
+  release still passes plain `verify` (re-hashing only), so stripping signatures is caught only by
+  `verify --require-signed`. Keys are plain files in `~/.vcm/keys` (mode 0600, no passphrase, no
+  HSM), there is no revocation or expiry, and the pure-Python Ed25519 is not constant-time.
+  Device passports report whether their release's signatures are trusted but are not signed
+  themselves.
 - The REST API uses static bearer tokens from the environment (`VCM_API_TOKEN` or per-person
   `VCM_API_TOKENS=alice=…,bob=…`). Tokens bind PR author/comment/approval identity, but there are no
   roles or permissions, no token rotation or expiry, and no TLS: run it on loopback or behind a

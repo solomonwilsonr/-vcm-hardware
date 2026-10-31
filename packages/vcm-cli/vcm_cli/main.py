@@ -13,7 +13,7 @@ from vcm_ai.catalog import (
     Catalog,
     read_file,
 )
-from vcm_core import NothingToCommit, Repository, VcmError
+from vcm_core import NothingToCommit, Repository, VcmError, signing
 from vcm_diff import diff_revisions, render_text
 from vcm_graph import build_graph, project_config
 from vcm_graph.backends.appwrite_backend import health as appwrite_health
@@ -40,6 +40,7 @@ from vcm_workflow import (
     render_plan,
     render_pr,
     render_timeline,
+    sign_release,
     timeline,
     verify_release,
 )
@@ -198,15 +199,44 @@ def cmd_release_create(args) -> int:
 
 
 def cmd_release_verify(args) -> int:
-    res = verify_release(_repo(args), args.release, worktree=args.worktree)
+    res = verify_release(_repo(args), args.release, worktree=args.worktree,
+                         require_signed=args.require_signed)
     if args.json:
         _dump(res)
     else:
         for c in res["problems"]:
             print(f"FAIL {c['check']}: {c['detail']}")
         print(f"release {res['release']}: {'OK' if res['ok'] else 'VERIFICATION FAILED'} "
-              f"({len(res['checks'])} checks)")
+              f"({len(res['checks'])} checks, "
+              f"{'signed by ' + ', '.join(res['signed_by']) if res['signed_by'] else 'unsigned'})")
     return 0 if res["ok"] else 1
+
+
+def cmd_release_sign(args) -> int:
+    m = sign_release(_repo(args), args.name, args.key, out=args.out)
+    print(f"release {m['name']} signed by {args.key} (manifest sha256 {m['manifest_sha256'][:16]})")
+    if "_warning" in m:
+        print(f"vcm: warning: {m['_warning']}", file=sys.stderr)
+    return 0
+
+
+def cmd_key(args) -> int:
+    if args.key_cmd == "gen":
+        pub = signing.generate_key(args.name)
+        print(f"generated key {args.name} in {signing.key_dir()}")
+        print(f"public key: {pub}")
+        print(f"next: vcm key trust {args.name}   (adds it to trustdb.json; commit that file)")
+    elif args.key_cmd == "trust":
+        pub = args.public or signing.own_public_key(args.name)
+        signing.trust_key(_repo(args), args.name, pub)
+        print(f"trusted {args.name}: {pub}")
+    else:
+        trust = signing.load_trust(_repo(args))
+        mine = set(signing.local_keys())
+        for name in sorted(trust.keys() | mine):
+            where = ("trusted" if name in trust else "NOT trusted") + (", private key here" if name in mine else "")
+            print(f"{name}  {trust[name]['public_key'] if name in trust else signing.own_public_key(name)}  {where}")
+    return 0
 
 
 def cmd_rollback(args) -> int:
@@ -480,7 +510,25 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_release_verify)
     s.add_argument("release", help="release name or manifest file")
     s.add_argument("--worktree", action="store_true")
+    s.add_argument("--require-signed", action="store_true",
+                   help="fail unless the release carries a valid signature from a trusted key")
     s.add_argument("--json", action="store_true")
+    s = rel.add_parser("sign", help="sign a release manifest digest with a local private key")
+    s.set_defaults(fn=cmd_release_sign)
+    s.add_argument("name")
+    s.add_argument("--key", required=True, help="name of a key made with `vcm key gen`")
+    s.add_argument("--out", help="also rewrite this exported manifest file with the signature")
+
+    k = sub.add_parser("key", help="signing keys and the committed trust DB").add_subparsers(
+        dest="key_cmd", required=True)
+    s = k.add_parser("gen", help="create a private key in $VCM_KEY_DIR (default ~/.vcm/keys)")
+    s.set_defaults(fn=cmd_key)
+    s.add_argument("name")
+    s = k.add_parser("trust", help="add a public key to trustdb.json")
+    s.set_defaults(fn=cmd_key)
+    s.add_argument("name")
+    s.add_argument("--public", help="hex public key of someone else (default: your own key's)")
+    k.add_parser("list", help="trusted keys and local private keys").set_defaults(fn=cmd_key)
 
     rb = sub.add_parser("rollback", help="rollback planning").add_subparsers(dest="rb_cmd", required=True)
     s = rb.add_parser("plan")

@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import re
 
-from vcm_core import Repository, VcmError, now_iso
+from vcm_core import Repository, VcmError, now_iso, signing
 from vcm_diff import diff_revisions
 from vcm_parsers import design_from_revision
 
@@ -37,6 +37,16 @@ def list_devices(repo: Repository) -> list[dict]:
     return repo.list_records("devices")
 
 
+def _signature_status(repo: Repository, rel: dict) -> list[dict]:
+    """Each release signature with whether it verifies against the committed trust DB."""
+    trust = signing.load_trust(repo) if rel.get("signatures") else {}
+    out = []
+    for sig in rel.get("signatures") or []:
+        ok, detail = signing.check_signature(sig, rel.get("manifest_sha256", ""), trust)
+        out.append({"key_id": sig.get("key_id"), "trusted": ok, "detail": detail})
+    return out
+
+
 def passport(repo: Repository, serial: str) -> dict:
     dev = repo.load_record("devices", serial)
     rel = repo.load_record("releases", dev["release"])
@@ -50,7 +60,8 @@ def passport(repo: Repository, serial: str) -> dict:
         "serial": serial, "batch": dev["batch"], "registered_at": dev["registered_at"],
         "notes": dev["notes"],
         "release": {"name": rel["name"], "manifest_sha256": rel.get("manifest_sha256"),
-                    "created_at": rel.get("created_at")},
+                    "created_at": rel.get("created_at"),
+                    "signatures": _signature_status(repo, rel)},
         "revision": {"id": rev.id, "message": rev.message, "author": rev.author,
                      "timestamp": rev.timestamp, "tags": tags},
         "lineage": lineage,

@@ -55,7 +55,7 @@ Each finding carries `evidence` entries of type `file` (path, hash, revision), `
 
 ## Security and trust notes
 
-- Hash checks detect modification of stored blobs and manifests, but nothing is signed. An attacker with write access to `.vcm/` could rewrite blobs and recompute manifests.
+- Hash checks detect modification of stored blobs and manifests, and releases can carry Ed25519 signatures checked against the committed `trustdb.json`. Signing is opt-in: an unsigned release is only protected by its hashes, so an attacker with write access to `.vcm/` could rewrite and re-hash it, and could strip signatures unless `verify --require-signed` is used.
 - The API has no authentication or authorisation. Run it on localhost or behind your own access control.
 - Paths from the working tree are stored as POSIX relative paths; release and device names are validated against a conservative pattern before being used as file names.
 - Parsers treat file content as untrusted data (no evaluation). The `kicad-cli` wrapper passes file paths as argv entries, never through a shell.

@@ -3,28 +3,59 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 from vcm_ai import analyze, get_provider, to_markdown
+from vcm_ai import review as catalog_review
 from vcm_ai.catalog import (
+    NUMERIC_FIELDS,
     PROJECT_CATALOG_DIR,
     USER_CATALOG,
     Catalog,
+    CatalogError,
     read_file,
+    review_part,
+    unverified_fields,
 )
-from vcm_core import NothingToCommit, Repository, VcmError
-from vcm_diff import diff_revisions, render_text
+from vcm_ai.rules_datacenter import node_meta
+from vcm_core import NothingToCommit, Repository, VcmError, now_iso
+from vcm_core import remote as rm
+from vcm_core import signing as sg
+from vcm_core.tokens import ROLES, TokenStore
+from vcm_diff import compare_drift, diff_revisions, render_text
 from vcm_graph import build_graph, project_config
 from vcm_graph.backends.appwrite_backend import health as appwrite_health
 from vcm_graph.backends.appwrite_backend import provision as appwrite_provision
-from vcm_parsers import design_from_revision
+from vcm_mcp import approve as approve_proposal
+from vcm_mcp import get_proposal, list_proposals, reject, serve
+from vcm_mcp.proposals import render as render_proposal
+from vcm_parsers import (
+    captures,
+    design_from_revision,
+    doctor,
+    merge_observations,
+    parse_nvidia_smi,
+    parse_redfish,
+    render_doctor,
+    to_node_manifest,
+)
 from vcm_trace import (
     affected_by_component,
     affected_by_revision,
+    define_rack,
+    fleet_query,
+    import_netbox,
     list_devices,
+    list_racks,
     passport,
+    place_device,
+    plan_rollout,
+    rack_power,
+    recall,
     register_device,
+    sign_device,
 )
 from vcm_validation import check_bom_text, compare_validation, validate_revision
 from vcm_workflow import (
@@ -32,14 +63,18 @@ from vcm_workflow import (
     approve,
     close_pr,
     create_release,
+    evaluate_policy,
     explain,
     get_pr,
     list_prs,
+    load_policy,
     open_pr,
     plan_rollback,
     render_plan,
+    render_policy,
     render_pr,
     render_timeline,
+    sign_release,
     timeline,
     verify_release,
 )
@@ -75,6 +110,20 @@ def cmd_init(args) -> int:
 
 def cmd_commit(args) -> int:
     repo = _repo(args)
+    if not args.ignore_locks and repo.head_id():
+        st = repo.status()
+        touched = st["added"] + st["removed"] + st["modified"]
+        for name in rm.remotes(repo):
+            remote = rm.Remote.of(repo, name)
+            blocked = rm.blocking_locks(remote, touched, args.author or rm.identity())
+            if blocked:
+                for b in blocked:
+                    print(f"{b['path']} is locked on {name} by {b['holder']} until "
+                          f"{b['expires_at']}" + (f": {b['reason']}" if b.get("reason") else ""),
+                          file=sys.stderr)
+                print("commit refused; ask the holder, or --ignore-locks to commit locally "
+                      "(the push will still be refused)", file=sys.stderr)
+                return 1
     try:
         rev = repo.commit(args.message, author=args.author)
     except NothingToCommit as e:
@@ -190,22 +239,46 @@ def cmd_validate(args) -> int:
     return 0 if res["status"] == "pass" else 1
 
 
+def cmd_policy(args) -> int:
+    repo = _repo(args)
+    a, b = _pair(args)
+    pol = load_policy(repo, b)
+    report = analyze(repo, a, b) if pol else None
+    res = evaluate_policy(pol, report, "check",
+                          observed_base=repo.latest_evidence(repo.resolve(a), "observed") is not None)
+    _dump(res) if args.json else print(render_policy(res))
+    return 0 if res["ok"] else 1
+
+
 def cmd_release_create(args) -> int:
-    m = create_release(_repo(args), args.name, args.rev, out=args.out, run_kicad=args.kicad)
+    m = create_release(_repo(args), args.name, args.rev, out=args.out, run_kicad=args.kicad,
+                       override_policy=args.override_policy)
+    if m["policy"].get("override"):
+        print(f"WARNING: released despite policy violations ({', '.join(m['policy']['violations'])}); "
+              f"override recorded: {m['policy']['override']['reason']}", file=sys.stderr)
     print(f"release {m['name']} -> revision {m['revision'][:10]}  validation {m['validation']['status']}")
     print(f"  {len(m['artifacts'])} artifacts pinned, manifest sha256 {m['manifest_sha256'][:16]}")
     return 0
 
 
+def cmd_release_sign(args) -> int:
+    sig = sign_release(_repo(args), args.name, args.key, args.signer)
+    print(f"signed release {args.name} with {sig['key_id']} ({sig['signer']})")
+    return 0
+
+
 def cmd_release_verify(args) -> int:
-    res = verify_release(_repo(args), args.release, worktree=args.worktree)
+    res = verify_release(_repo(args), args.release, worktree=args.worktree,
+                         require_signature=args.require_signature)
     if args.json:
         _dump(res)
     else:
         for c in res["problems"]:
             print(f"FAIL {c['check']}: {c['detail']}")
+        signed = (f"signed ({res['valid_signatures']} valid signature(s))" if res["signed"]
+                  else "UNSIGNED: hashes prove consistency, not who vouched for it")
         print(f"release {res['release']}: {'OK' if res['ok'] else 'VERIFICATION FAILED'} "
-              f"({len(res['checks'])} checks)")
+              f"({len(res['checks'])} checks); {signed}")
     return 0 if res["ok"] else 1
 
 
@@ -219,6 +292,501 @@ def cmd_device_register(args) -> int:
     d = register_device(_repo(args), args.serial, args.release, args.batch, args.notes)
     print(f"registered {d['serial']} (release {d['release']}, revision {d['revision'][:10]})")
     print(f"  QR payload: {d['qr_payload']}\n  QR SVG:     {d['qr_svg']}")
+    return 0
+
+
+def cmd_device_sign(args) -> int:
+    sig = sign_device(_repo(args), args.serial, args.key, args.signer)
+    print(f"signed passport record of {args.serial} with {sig['key_id']} ({sig['signer']})")
+    return 0
+
+
+def cmd_key(args) -> int:
+    if args.key_cmd == "gen":
+        k = sg.generate_key(args.name)
+        print(f"created key {k['name']} ({k['key_id']}) at {k['path']}")
+        print(f"  public key: {k['public_key']}")
+        if args.trust:
+            repo = _repo(args)
+            sg.trust_key(repo.root, k["name"], k["public_key"], now_iso(), args.role)
+            repo.audit.append("key.trust", k["key_id"], {"name": k["name"]})
+            print(f"  trusted in {sg.trust_path(repo.root)} (commit it)")
+        return 0
+    repo = _repo(args)
+    if args.key_cmd == "trust":
+        pub = args.public or sg.public_from_secret(sg.load_secret(args.name))
+        entry = sg.trust_key(repo.root, args.name, pub, now_iso(), args.role)
+        repo.audit.append("key.trust", entry["key_id"], {"name": args.name})
+        print(f"trusted {args.name} ({entry['key_id']}) for {', '.join(entry['roles'])}")
+    elif args.key_cmd == "revoke":
+        sg.revoke_key(repo.root, args.key_id)
+        repo.audit.append("key.revoke", args.key_id)
+        print(f"revoked {args.key_id}; signatures by it no longer verify")
+    else:
+        keys = sg.load_trust(repo.root)["keys"]
+        for kid, e in sorted(keys.items()):
+            print(f"{kid}  {e['name']:16} {','.join(e['roles']):18} added {e['added_at']}")
+        if not keys:
+            print("no trusted keys")
+    return 0
+
+
+def cmd_token(args) -> int:
+    repo = _repo(args)
+    store = TokenStore(repo.dir)
+    if args.token_cmd == "create":
+        token = store.create(args.user, args.role, now_iso())
+        repo.audit.append("token.create", args.user, {"role": args.role})
+        print(f"token for {args.user} ({args.role}); shown once, store it now:\n{token}")
+    elif args.token_cmd == "revoke":
+        n = store.revoke(args.token_id)
+        repo.audit.append("token.revoke", args.token_id)
+        print(f"revoked {n} token(s)")
+    else:
+        for t in store.list():
+            print(f"{t['id']}  {t['user']:16} {t['role']:9} created {t['created_at']}")
+    return 0
+
+
+def cmd_serve(args) -> int:
+    try:
+        import uvicorn
+
+        from vcm_api import create_app
+    except ImportError:
+        print("vcm serve needs the API extras: pip install 'vcm-hardware[api]'", file=sys.stderr)
+        return 2
+    from vcm_api.app import AuthConfigError
+    try:
+        app = create_app(str(_repo(args).root), insecure=args.insecure)
+    except AuthConfigError as e:
+        print(f"vcm: error: {e}", file=sys.stderr)
+        return 1
+    if args.insecure:
+        print("WARNING: serving WITHOUT authentication (--insecure)", file=sys.stderr)
+    uvicorn.run(app, host=args.host, port=args.port)
+    return 0
+
+
+def _observation(args) -> dict:
+    """One merged observation from --observed / --redfish / --nvidia-smi files."""
+    parts = []
+    for f in args.observed or []:
+        parts.append(json.loads(Path(f).read_text()))
+    for f in args.redfish or []:
+        parts.append(parse_redfish(Path(f).read_text()))
+    for f in args.nvidia_smi or []:
+        parts.append(parse_nvidia_smi(Path(f).read_text()))
+    if not parts:
+        raise VcmError("give at least one of --observed, --redfish, --nvidia-smi")
+    obs = merge_observations(parts)
+    obs["captured_at"] = now_iso()
+    return obs
+
+
+def _read_all(paths: list[str] | None) -> str | None:
+    return Path(paths[0]).read_text() if paths else None
+
+
+def cmd_inventory_doctor(args) -> int:
+    res = doctor(_read_all(args.redfish), _read_all(args.nvidia_smi))
+    _dump(res) if args.json else print(render_doctor(res))
+    return 1 if (not res["ok"] or (args.strict and res["warnings"])) else 0
+
+
+def cmd_inventory_sanitize(args) -> int:
+    from vcm_parsers.sanitize import sanitize_bundle
+    files = {}
+    for src, name in ((args.redfish, "redfish.json"), (args.nvidia_smi, None),
+                      (args.netbox, "netbox.json")):
+        if src:
+            text = Path(src).read_text()
+            files[name or ("nvidia-smi.xml" if text.lstrip().startswith("<")
+                           else "nvidia-smi.csv")] = text
+    if not files:
+        raise VcmError("give at least one of --redfish, --nvidia-smi, --netbox")
+    res = sanitize_bundle(files, salt=args.salt, extra_keys=tuple(args.also or ()))
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    for name, text in res["files"].items():
+        (out / name).write_text(text)
+    # a starting point for the regression test that will guard this capture from now on
+    diag = doctor(res["files"].get("redfish.json"),
+                  next((t for n, t in res["files"].items() if n.startswith("nvidia-smi")), None))
+    expect = {"schema": "vcm-capture-expect/1", "components": diag["components"],
+              "covers": diag["covers"], "firmware": diag["firmware"],
+              "allow_problems": diag["problems"], "notes": "edit: what is this machine?"}
+    (out / "expect.json").write_text(json.dumps(expect, indent=1) + "\n")
+    captures.seal(out, res["summary"])
+    print(f"wrote {', '.join(sorted(res['files']))} and a sealed expect.json to {out}")
+    print("scrubbed: " + (", ".join(f"{k} {v}" for k, v in sorted(res["summary"].items()))
+                          or "nothing identifying found"))
+    leaks = res["leaks"]
+    for r in leaks["residual"]:
+        print(f"LEAK    {r}", file=sys.stderr)
+    for p in leaks["possible"]:
+        print(f"check   {p}", file=sys.stderr)
+    print("Read the output before you share or commit it: free-text and vendor-specific fields "
+          "can hold things only you would recognise.", file=sys.stderr)
+    if not diag["ok"]:
+        print("note: the doctor found problems in this capture (recorded in expect.json as "
+              "allowed; fix or re-capture if they are not expected):", file=sys.stderr)
+        for pr in diag["problems"]:
+            print(f"  {pr}", file=sys.stderr)
+    return 1 if leaks["residual"] or (args.strict and leaks["possible"]) else 0
+
+
+def cmd_inventory_check(args) -> int:
+    from vcm_parsers import captures
+    folder = Path(args.folder)
+    problems = captures.check(folder)
+    for p in problems:
+        print(f"PROBLEM  {p}")
+    print(f"{folder.name}: {'OK' if not problems else str(len(problems)) + ' problem(s)'}")
+    return 1 if problems else 0
+
+
+def cmd_inventory_seal(args) -> int:
+    folder = Path(args.folder)
+    exp = captures.seal(folder)
+    print(f"sealed {', '.join(sorted(exp['sanitized']['sha256']))} in {folder}/expect.json")
+    print("Only seal files you have read: the seal says a person looked at them.")
+    return 0
+
+
+def cmd_inventory(args) -> int:
+    if args.inv_cmd == "check":
+        return cmd_inventory_check(args)
+    if args.inv_cmd == "seal":
+        return cmd_inventory_seal(args)
+    if args.inv_cmd == "doctor":
+        return cmd_inventory_doctor(args)
+    if args.inv_cmd == "sanitize":
+        return cmd_inventory_sanitize(args)
+    if args.inv_cmd == "fetch-redfish":
+        import os
+
+        from .redfish_fetch import fetch
+        password = os.environ.get(args.password_env, "")
+        if not password:
+            print(f"set the BMC password in ${args.password_env}", file=sys.stderr)
+            return 2
+        cap = fetch(args.url, args.user, password, ca_file=args.ca_file,
+                    verify_tls=not args.insecure_tls)
+        Path(args.out).write_text(json.dumps(cap, indent=1) + "\n")
+        print(f"captured {len(cap['resources'])} Redfish resources into {args.out}")
+        return 0
+    obs = _observation(args)
+    if args.inv_cmd == "manifest":
+        draft = to_node_manifest(obs)
+        text = json.dumps(draft, indent=1) + "\n"
+        Path(args.out).write_text(text) if args.out else print(text, end="")
+        if args.out:
+            print(f"drafted {args.out}: {len(draft['components'])} components. Connections, "
+                  "power domains and chassis cooling are not observable: declare them by hand.")
+        return 0
+    text = json.dumps(obs, indent=1) + "\n"
+    Path(args.out).write_text(text) if args.out else print(text, end="")
+    if args.out:
+        print(f"observed {len(obs['components'])} components from {', '.join(obs['sources'])} "
+              f"into {args.out}")
+    return 0
+
+
+def cmd_drift(args) -> int:
+    repo = _repo(args)
+    obs = _observation(args)
+    rev = repo.get_revision(args.rev)
+    design = design_from_revision(repo, rev)
+    meta = node_meta(design)
+    if not meta:
+        raise VcmError(f"{args.rev} has no node manifest to compare against")
+    res = compare_drift(design, meta, obs)
+    if args.attach:
+        repo.attach_evidence(rev.id, "observed", {"observation": obs, "drift": res,
+                                                  "captured_at": obs.get("captured_at", "")})
+        repo.audit.append("observe", rev.id, {"status": res["status"],
+                                              "sources": obs["sources"]})
+    if args.json:
+        _dump(res)
+    else:
+        print(f"{res['node']} vs {args.rev} ({rev.id[:10]}): {res['status'].upper()} "
+              f"[{', '.join(res['sources'])}]")
+        for f in res["findings"]:
+            print(f"  {f['severity'].upper():8} {f['title']}")
+        print(f"  checked: {', '.join(res['checked_types'] + res['checked_firmware']) or 'nothing'}")
+        if res["unchecked_types"]:
+            print(f"  NOT checked (no source reports them): {', '.join(res['unchecked_types'])}")
+        if args.attach:
+            print(f"  attached as evidence to {rev.id[:10]}; `vcm impact` will cite it")
+    return 1 if res["status"] == "drifted" else 0
+
+
+def _criteria(args) -> dict:
+    return {"type_": args.type, "model": args.model, "mpn": args.mpn,
+            "firmware": args.firmware, "rack": args.rack, "release": args.release}
+
+
+def _units_csv(units: list[dict]) -> str:
+    import csv
+    import io
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["serial", "rack", "position", "release", "revision", "components", "firmware"])
+    for u in units:
+        w.writerow([u["serial"], u["rack"] or "", u["position"] or "", u["release"],
+                    u["revision"][:12], " ".join(f"{c['ref']}={c['model']}" for c in u["components"]),
+                    " ".join(f"{k}={v}" for k, v in sorted(u["firmware"].items()))])
+    return buf.getvalue()
+
+
+def cmd_fleet(args) -> int:
+    repo = _repo(args)
+    c = args.fleet_cmd
+    if c == "rack":
+        if args.rack_cmd == "define":
+            r = define_rack(repo, args.name, args.budget, args.cooling, args.site, args.units)
+            print(f"rack {r['name']}: budget {r.get('power_budget_w', 'none')} W")
+        else:
+            for r in list_racks(repo):
+                print(f"{r['name']:16} budget {r.get('power_budget_w', '-')!s:>8} W  "
+                      f"site {r.get('site') or '-'}")
+        return 0
+    if c == "place":
+        place_device(repo, args.serial, args.rack, args.position)
+        print(f"{args.serial} -> rack {args.rack}" + (f" U{args.position}" if args.position else ""))
+        return 0
+    if c in ("query", "recall"):
+        if c == "recall" and not any((args.type, args.model, args.mpn, args.firmware)):
+            raise VcmError("a recall needs --model, --mpn, --type or --firmware")
+        res = recall(repo, **_criteria(args)) if c == "recall" else fleet_query(repo, **_criteria(args))
+        units = res["units"] if c == "recall" else res
+        if args.json:
+            _dump(res)
+        elif args.csv:
+            print(_units_csv(units), end="")
+        else:
+            for u in units:
+                comps = ", ".join(f"{x['ref']}={x['model']}" for x in u["components"][:4])
+                more = len(u["components"]) - 4
+                print(f"{u['serial']:14} rack {u['rack'] or '-':10} release {u['release']:8} "
+                      f"{comps}{f' (+{more})' if more > 0 else ''}")
+            if c == "recall":
+                print(f"{res['count']} unit(s), {res['components']} component(s); by rack: "
+                      + ", ".join(f"{k} {len(v)}" for k, v in sorted(res["by_rack"].items())))
+            else:
+                print(f"{len(units)} unit(s)")
+        return 0
+    if c == "power":
+        res = rack_power(repo, args.upgrade_to, args.release)
+        if args.json:
+            _dump(res)
+        else:
+            for r in res["racks"]:
+                line = (f"{r['rack']:14} {len(r['units']):3} unit(s)  now {r['now_w']:7.0f} W "
+                        f"[{r['now_status']}]")
+                if res["upgrade_to"]:
+                    line += f"  after {r['after_w']:7.0f} W [{r['after_status']}]"
+                print(line + (f"  budget {r['budget_w']:g} W" if r["budget_w"] else ""))
+                if r["unknown"]:
+                    print(f"{'':14} draw unknown for {', '.join(r['unknown'])}")
+            print(res["note"])
+        return 1 if res["over_after"] else 0
+    if c == "rollout":
+        res = plan_rollout(repo, args.to, args.release, args.max_per_rack, args.wave_size,
+                           args.allow_critical)
+        if args.json:
+            _dump(res)
+            return 0
+        for w in res["waves"]:
+            print(f"wave {w['wave']}: " + ", ".join(f"{u['serial']} ({u['rack']})" for u in w["units"]))
+        for b in res["blocked"]:
+            print(f"BLOCKED  {b['serial']}: {'; '.join(b['critical'][:3])}")
+        for d in res["deferred"]:
+            print(f"DEFERRED {d['serial']}: {d['reason']}")
+        print(f"{res['scheduled']} scheduled in {len(res['waves'])} wave(s), "
+              f"{len(res['blocked'])} blocked, {len(res['deferred'])} deferred")
+        return 0
+    # netbox
+    if args.url:
+        import os
+
+        from .netbox_fetch import fetch_all
+        token = os.environ.get(args.token_env, "")
+        if not token:
+            print(f"set the NetBox API token in ${args.token_env}", file=sys.stderr)
+            return 2
+        devices = fetch_all(args.url, "/api/dcim/devices/", token)
+        racks = fetch_all(args.url, "/api/dcim/racks/", token)
+    elif args.devices:
+        devices = json.loads(Path(args.devices).read_text())
+        racks = json.loads(Path(args.racks).read_text()) if args.racks else None
+    else:
+        raise VcmError("give --devices FILE (saved /api/dcim/devices/ JSON) or --url")
+    res = import_netbox(repo, devices, racks, args.budget_field)
+    if args.json:
+        _dump(res)
+    else:
+        print(f"placed {len(res['placed'])} unit(s); racks created {len(res['racks_created'])}, "
+              f"updated {len(res['racks_updated'])}")
+        if res["unmatched_in_netbox"]:
+            print(f"  {len(res['unmatched_in_netbox'])} NetBox device(s) not registered in VCM: "
+                  + ", ".join(d['name'] or d['serial'] for d in res['unmatched_in_netbox'][:10]))
+        if res["not_in_netbox"]:
+            print(f"  {len(res['not_in_netbox'])} VCM unit(s) not found in NetBox: "
+                  + ", ".join(res["not_in_netbox"][:10]))
+    return 0
+
+
+def cmd_remote(args) -> int:
+    repo = _repo(args)
+    if args.remote_cmd == "add":
+        cfg = rm.add_remote(repo, args.name, args.url)
+        print(f"remote {args.name} -> {cfg['url']}")
+    else:
+        for name, cfg in sorted(rm.remotes(repo).items()):
+            print(f"{name}\t{cfg['url']}")
+    return 0
+
+
+def _conflicts(res: dict) -> None:
+    for t in res.get("tag_conflicts", []):
+        print(f"  CONFLICT tag {t}: differs between local and remote; left unchanged")
+    for r in res.get("record_conflicts", []):
+        print(f"  CONFLICT {r}: differs between local and remote; left unchanged")
+
+
+def cmd_push(args) -> int:
+    res = rm.push(_repo(args), args.remote, args.branch)
+    if res["up_to_date"]:
+        print(f"{res['remote']}/{res['branch']} already up to date")
+    else:
+        print(f"pushed {res['branch']} to {res['remote']}: "
+              f"{(res['from'] or 'new')[:10]} -> {res['to'][:10]}, {res['objects']} object(s), "
+              f"{len(res['tags'])} tag(s), {len(res['records'])} record(s)")
+    _conflicts(res)
+    return 0
+
+
+def cmd_pull(args) -> int:
+    repo = _repo(args)
+    if args.cmd == "fetch":
+        res = rm.fetch(repo, args.remote)
+        print(f"fetched {res['objects']} object(s), {len(res['tags'])} tag(s), "
+              f"{len(res['records'])} record(s) from {args.remote}")
+    else:
+        res = rm.pull(repo, args.remote, args.branch)
+        if res["fast_forward"]:
+            print(f"fast-forwarded {res['branch']}: {(res['before'] or 'none')[:10]} -> "
+                  f"{res['after'][:10]}")
+        else:
+            print(f"{res['branch']} is up to date with {args.remote}")
+    _conflicts(res)
+    return 0
+
+
+def cmd_lock(args) -> int:
+    repo = _repo(args)
+    remote = rm.Remote.of(repo, args.remote)
+    if args.lock_cmd == "acquire":
+        lock = rm.acquire_lock(remote, args.path, args.ttl, args.reason)
+        repo.audit.append("lock.acquire", args.path, {"remote": args.remote,
+                                                     "expires_at": lock["expires_at"]})
+        print(f"locked {args.path} for {lock['holder']} until {lock['expires_at']}")
+    elif args.lock_cmd == "release":
+        lock = rm.release_lock(remote, args.path, force=args.force)
+        repo.audit.append("lock.release" + (".forced" if args.force else ""), args.path,
+                          {"remote": args.remote, "holder": lock["holder"]})
+        print(f"released {args.path} (was held by {lock['holder']})")
+    else:
+        locks = rm.list_locks(remote)
+        for lk in locks:
+            state = "expired" if lk["expired"] else "until " + lk["expires_at"]
+            print(f"{lk['path']:40} {lk['holder']:14} {state}"
+                  + (f"  {lk['reason']}" if lk.get("reason") else ""))
+        if not locks:
+            print("no locks")
+    return 0
+
+
+def cmd_mcp(args) -> int:
+    return serve(str(_repo(args).root))
+
+
+def cmd_proposal(args) -> int:
+    repo = _repo(args)
+    by = getattr(args, "by", None) or os.environ.get("VCM_AUTHOR", "")
+    if args.prop_cmd == "list":
+        items = list_proposals(repo, args.status)
+        if args.json:
+            _dump(items)
+        for p in items if not args.json else []:
+            print(f"{p['id']}  {p['status']:9} {p['action']:16} {p['proposer']}  "
+                  + ", ".join(f"{k}={v}" for k, v in sorted(p["args"].items()))[:70])
+        if not items and not args.json:
+            print("no proposals")
+        return 0
+    if args.prop_cmd == "show":
+        rec = get_proposal(repo, args.id)
+        _dump(rec) if args.json else print(render_proposal(rec))
+        return 0
+    if args.prop_cmd == "approve":
+        rec = get_proposal(repo, args.id)
+        print(render_proposal(rec))
+        if not args.yes:
+            if not sys.stdin.isatty():
+                print("refusing to approve without confirmation: re-run with --yes after "
+                      "reading the above", file=sys.stderr)
+                return 1
+            if input(f"Approve {args.id} as {by or '?'}? [y/N] ").strip().lower() != "y":
+                print("not approved")
+                return 1
+        rec = approve_proposal(repo, args.id, by)
+        print(f"approved {rec['id']} as {by}: {rec['result']}")
+        return 0
+    rec = reject(repo, args.id, by, args.reason)
+    print(f"rejected {rec['id']} as {by}")
+    return 0
+
+
+def cmd_eval(args) -> int:
+    import tempfile
+
+    from vcm_mcp import evals
+    if args.eval_cmd == "list":
+        for c in evals.CASES:
+            print(f"{c.id:22} {c.title}")
+        return 0
+    agent = evals.REFERENCE.get(args.agent) or evals.external_agent(args.agent, args.timeout)
+    if args.agent not in evals.REFERENCE:
+        print(f"running external agent: {args.agent}", file=sys.stderr)
+    if args.keep:
+        work = Path(args.keep)
+        work.mkdir(parents=True, exist_ok=True)
+        res = evals.run_cases(agent, work, args.case)
+    else:
+        with tempfile.TemporaryDirectory() as d:
+            res = evals.run_cases(agent, Path(d), args.case)
+    _dump(res) if args.json else print(evals.render(res))
+    return 0 if res["passed"] == res["total"] else 1
+
+
+def cmd_audit(args) -> int:
+    log = _repo(args).audit
+    if args.audit_cmd == "verify":
+        res = log.verify()
+        if args.json:
+            _dump(res)
+        else:
+            print(f"audit log intact: {res['events']} events, head {res['head'][:16]}" if res["ok"]
+                  else f"AUDIT LOG BROKEN at event {res['broken_at']}: {res['reason']}")
+        return 0 if res["ok"] else 1
+    evs = log.events()[-args.n:] if args.n else log.events()
+    if args.json:
+        _dump(evs)
+        return 0
+    for e in evs:
+        print(f"{e['seq']:5} {e['at']} {e['actor']:12} {e['action']:16} {e['subject']}")
     return 0
 
 
@@ -305,7 +873,20 @@ def cmd_catalog(args) -> int:
         print(f"Imported {len(parts)} parts into {dest}")
         return 0
 
+    if args.catalog_cmd in ("priority", "worksheet"):
+        repo = _repo(args)
+        return _catalog_prep(args, repo, Catalog.load(project_dir=repo.root))
     catalog = Catalog.load(project_dir=Path.cwd())
+    if args.catalog_cmd == "review":
+        return _catalog_review(args, catalog)
+    if args.catalog_cmd == "unreviewed":
+        rows = [(p, unverified_fields(p)) for p in catalog.parts
+                if not args.type or p.get("type") == args.type]
+        rows = [(p, f) for p, f in rows if f]
+        for p, fields in sorted(rows, key=lambda x: (x[0].get("type", ""), x[0]["match"][0])):
+            print(f"  {p['match'][0]:26} {p.get('type', ''):6} unverified: {', '.join(fields)}")
+        print(f"{len(rows)} of {len(catalog.parts)} parts have values no human has verified")
+        return 0
     if args.catalog_cmd == "list":
         rows = [p for p in catalog.parts if not args.type or p.get("type") == args.type]
         if args.json:
@@ -346,6 +927,112 @@ def cmd_catalog(args) -> int:
     if cov["unknown"]:
         print(f"\nNo electrical rules run on the unknown parts above. Add them to "
               f"{PROJECT_CATALOG_DIR}/ or ~/.vcm/catalog/ and re-run.")
+    return 0
+
+
+def _catalog_prep(args, repo: Repository, catalog: Catalog) -> int:
+    revs = [args.rev] if args.rev else None
+    if args.catalog_cmd == "worksheet":
+        text = catalog_review.worksheet(repo, catalog, revs, args.type, args.top)
+        rows = max(0, text.count("\n") - 1)
+        if args.out:
+            Path(args.out).write_text(text)
+            print(f"wrote {rows} value(s) to check into {args.out}, most-used parts first.")
+            print("For each row you check: set decision to ok (or correct, with corrected_value), "
+                  "name the datasheet and page in datasheet_source, and put your own name in "
+                  "checked_by. Leave rows you did not check blank. Then:\n"
+                  f"  vcm catalog review --from-csv {args.out}")
+        else:
+            print(text, end="")
+        return 0
+    ranked = catalog_review.priority(repo, catalog, revs, args.type)
+    ranked = ranked[: args.top] if args.top else ranked
+    if args.json:
+        _dump(ranked)
+        return 0
+    counted = ranked[0]["counted_by"] if ranked else "units"
+    print(f"{len(ranked)} part(s) in use (counted by {counted}), most-used first")
+    for r in ranked:
+        state = "REVIEWED" if r["reviewed"] else f"{r['verified']}/{r['fields']} values verified"
+        print(f"  {r['part']:28} {r['type']:6} {r['units']:5} unit(s) {r['components']:5} "
+              f"component(s)  {state}")
+    total = sum(r["fields"] for r in ranked)
+    checked = sum(r["verified"] for r in ranked)
+    print(f"{checked} of {total} values on these parts have been checked by a named person")
+    return 0
+
+
+def _catalog_sheet(args, catalog: Catalog) -> int:
+    text = Path(args.from_csv).read_text()
+    try:
+        res = catalog_review.apply_worksheet(catalog, text, now_iso())
+    except CatalogError as e:
+        print(f"vcm: error: {e}", file=sys.stderr)
+        return 1
+    target = USER_CATALOG if args.scope == "user" else Path.cwd() / PROJECT_CATALOG_DIR
+    target.mkdir(parents=True, exist_ok=True)
+    dest = target / "reviews.json"
+    existing = json.loads(dest.read_text())["parts"] if dest.is_file() else []
+    keys = {p["match"][0].upper() for p in res["parts"]}
+    existing = [p for p in existing if p["match"][0].upper() not in keys] + res["parts"]
+    dest.write_text(json.dumps({"parts": existing}, indent=1) + "\n")
+    print(f"recorded {res['confirmed']} confirmation(s) and {res['corrected']} correction(s) "
+          f"on {len(res['parts'])} part(s) in {dest}; {res['skipped']} blank row(s) skipped")
+    if res["now_reviewed"]:
+        print(f"  now REVIEWED: {', '.join(res['now_reviewed'])}")
+    for part, left in sorted(res["still_unverified"].items()):
+        print(f"  {part}: still unverified: {', '.join(left)}")
+    try:
+        repo = Repository.discover(Path.cwd())
+        for p in res["parts"]:
+            repo.audit.append("catalog.review", p["match"][0], {"worksheet": args.from_csv},
+                              actor=next(iter({s["verified_by"] for s in
+                                               p.get("sources", {}).values()
+                                               if isinstance(s, dict) and s.get("verified_by")}),
+                                         None))
+    except VcmError:
+        pass
+    return 0
+
+
+def _catalog_review(args, catalog: Catalog) -> int:
+    if args.from_csv:
+        return _catalog_sheet(args, catalog)
+    if not (args.mpn and args.by and args.source):
+        print("vcm: error: give a part with --by and --source, or --from-csv a worksheet",
+              file=sys.stderr)
+        return 2
+    part = catalog.find(args.mpn, args.mpn)
+    if part is None:
+        print(f"{args.mpn}: not in the catalog; import it first", file=sys.stderr)
+        return 1
+    values = {}
+    for item in args.set or []:
+        key, _, raw = item.partition("=")
+        values[key] = float(raw) if key in NUMERIC_FIELDS else raw
+    try:
+        reviewed = review_part(part, values, args.source, args.by, now_iso(), args.confirm or [])
+    except CatalogError as e:
+        print(f"vcm: error: {e}", file=sys.stderr)
+        return 1
+    target = USER_CATALOG if args.scope == "user" else Path.cwd() / PROJECT_CATALOG_DIR
+    target.mkdir(parents=True, exist_ok=True)
+    dest = target / "reviews.json"
+    existing = json.loads(dest.read_text())["parts"] if dest.is_file() else []
+    key = reviewed["match"][0].upper()
+    existing = [p for p in existing if p["match"][0].upper() != key] + [reviewed]
+    dest.write_text(json.dumps({"parts": existing}, indent=1) + "\n")
+    left = unverified_fields(reviewed)
+    print(f"recorded review of {reviewed['match'][0]} by {args.by} in {dest}")
+    print("  part is now REVIEWED" if reviewed["reviewed"] else
+          f"  still unverified: {', '.join(left)}")
+    try:
+        Repository.discover(Path.cwd()).audit.append(
+            "catalog.review", reviewed["match"][0],
+            {"fields": sorted([*values, *(args.confirm or [])]), "source": args.source},
+            actor=args.by)
+    except VcmError:
+        pass  # reviewing outside a repository is fine; there is just no audit log to write to
     return 0
 
 
@@ -409,6 +1096,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-m", "--message", required=True)
     s.add_argument("--author")
     s.add_argument("--tag")
+    s.add_argument("--ignore-locks", action="store_true",
+                   help="commit even if a remote lock is held by someone else")
     add("status", cmd_status, "working tree changes", True)
     s = add("log", cmd_log, "revision history", True)
     s.add_argument("-n", type=int)
@@ -428,6 +1117,9 @@ def build_parser() -> argparse.ArgumentParser:
         s.add_argument("b", nargs="?")
         if name == "impact":
             s.add_argument("--llm", default="none", help="LLM provider name (default none: offline)")
+    s = add("policy", cmd_policy, "check a change against the committed vcm-policy.json", True)
+    s.add_argument("a", nargs="?")
+    s.add_argument("b", nargs="?")
     s = add("explain", cmd_explain, "explain the change between two revisions", True)
     s.add_argument("a")
     s.add_argument("b")
@@ -452,10 +1144,19 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--rev", default="HEAD")
     s.add_argument("--out", help="also write the manifest to this .json/.yaml file")
     s.add_argument("--kicad", action="store_true")
+    s.add_argument("--override-policy", metavar="REASON",
+                   help="release despite vcm-policy.json violations; the reason is recorded")
+    s = rel.add_parser("sign", help="sign a release manifest with a trusted Ed25519 key")
+    s.set_defaults(fn=cmd_release_sign)
+    s.add_argument("name")
+    s.add_argument("--key", required=True, help="private key name in ~/.vcm/keys")
+    s.add_argument("--signer", help="signer name recorded with the signature (default: key name)")
     s = rel.add_parser("verify")
     s.set_defaults(fn=cmd_release_verify)
     s.add_argument("release", help="release name or manifest file")
     s.add_argument("--worktree", action="store_true")
+    s.add_argument("--require-signature", action="store_true",
+                   help="fail unless a trusted key has signed the release")
     s.add_argument("--json", action="store_true")
 
     rb = sub.add_parser("rollback", help="rollback planning").add_subparsers(dest="rb_cmd", required=True)
@@ -473,6 +1174,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--batch", default="")
     s.add_argument("--notes", default="")
     dev.add_parser("list").set_defaults(fn=cmd_device_list)
+    s = dev.add_parser("sign", help="sign a unit's registration record")
+    s.set_defaults(fn=cmd_device_sign)
+    s.add_argument("serial")
+    s.add_argument("--key", required=True)
+    s.add_argument("--signer")
     s = dev.add_parser("passport")
     s.set_defaults(fn=cmd_device_passport)
     s.add_argument("serial")
@@ -511,6 +1217,228 @@ def build_parser() -> argparse.ArgumentParser:
 
     add("timeline", cmd_timeline, "hardware time machine", True)
 
+    k = sub.add_parser("key", help="signing keys and the trust database")
+    k = k.add_subparsers(dest="key_cmd", required=True)
+    s = k.add_parser("gen", help="create an Ed25519 signing key in ~/.vcm/keys")
+    s.set_defaults(fn=cmd_key)
+    s.add_argument("name")
+    s.add_argument("--trust", action="store_true", help="also add it to this repo's trustdb.json")
+    s.add_argument("--role", action="append", choices=["release", "passport"],
+                   help="what the key may sign (repeatable; default both)")
+    s = k.add_parser("trust", help="add a public key to trustdb.json")
+    s.set_defaults(fn=cmd_key)
+    s.add_argument("name")
+    s.add_argument("--public", help="hex public key (default: derive from the local key)")
+    s.add_argument("--role", action="append", choices=["release", "passport"])
+    s = k.add_parser("revoke", help="remove a key from trustdb.json")
+    s.set_defaults(fn=cmd_key)
+    s.add_argument("key_id")
+    k.add_parser("list", help="trusted keys").set_defaults(fn=cmd_key)
+
+    def obs_args(sp):
+        sp.add_argument("--observed", action="append", help="vcm-observed/1 JSON (repeatable)")
+        sp.add_argument("--redfish", action="append", help="Redfish capture JSON (repeatable)")
+        sp.add_argument("--nvidia-smi", action="append",
+                        help="nvidia-smi --query-gpu CSV or -q -x XML (repeatable)")
+
+    inv = sub.add_parser("inventory", help="read what a machine reports about itself")
+    inv = inv.add_subparsers(dest="inv_cmd", required=True)
+    s = inv.add_parser("import", help="normalise captures into one vcm-observed/1 file")
+    s.set_defaults(fn=cmd_inventory)
+    obs_args(s)
+    s.add_argument("--out")
+    s = inv.add_parser("manifest", help="draft a node manifest from captures")
+    s.set_defaults(fn=cmd_inventory)
+    obs_args(s)
+    s.add_argument("--out")
+    s = inv.add_parser("doctor", help="say what a capture gave VCM and, above all, what it did not")
+    s.set_defaults(fn=cmd_inventory)
+    s.add_argument("--redfish", action="append", help="Redfish capture JSON")
+    s.add_argument("--nvidia-smi", action="append", help="nvidia-smi CSV or XML")
+    s.add_argument("--strict", action="store_true", help="exit 1 on warnings as well as problems")
+    s.add_argument("--json", action="store_true")
+    s = inv.add_parser("sanitize", help="scrub serials, addresses and secrets from captures so "
+                       "they can be shared and committed")
+    s.set_defaults(fn=cmd_inventory)
+    s.add_argument("--redfish", help="Redfish capture JSON")
+    s.add_argument("--nvidia-smi", help="nvidia-smi CSV or XML")
+    s.add_argument("--netbox", help="saved NetBox JSON (device names and comments are NOT "
+                   "scrubbed unless named with --also)")
+    s.add_argument("--also", action="append", metavar="KEY",
+                   help="also scrub values under this key (repeatable), e.g. name, comments")
+    s.add_argument("--salt", help="keep pseudonyms stable across runs (keep it secret); "
+                   "default: random per run")
+    s.add_argument("--out", required=True, help="directory to write the scrubbed files to")
+    s.add_argument("--strict", action="store_true", help="exit 1 if anything needs a look")
+    s = inv.add_parser("check", help="check a capture folder: sealed, nothing sensitive, and "
+                       "VCM still reads it as expected")
+    s.set_defaults(fn=cmd_inventory)
+    s.add_argument("folder")
+    s = inv.add_parser("seal", help="record checksums after you have read a capture folder")
+    s.set_defaults(fn=cmd_inventory)
+    s.add_argument("folder")
+    s = inv.add_parser("fetch-redfish", help="capture a live BMC over the network (explicit)")
+    s.set_defaults(fn=cmd_inventory)
+    s.add_argument("url", help="e.g. https://10.0.0.21")
+    s.add_argument("--user", required=True)
+    s.add_argument("--password-env", default="VCM_BMC_PASSWORD",
+                   help="environment variable holding the password")
+    s.add_argument("--ca-file", help="CA bundle for the BMC's certificate")
+    s.add_argument("--insecure-tls", action="store_true",
+                   help="skip certificate verification (self-signed BMCs; prefer --ca-file)")
+    s.add_argument("--out", required=True)
+
+    s = add("drift", cmd_drift, "compare a revision's node manifest with the real machine", True)
+    obs_args(s)
+    s.add_argument("--rev", default="HEAD")
+    s.add_argument("--attach", action="store_true",
+                   help="store the observation as evidence on the revision")
+
+    fl = sub.add_parser("fleet", help="racks, fleet queries, recalls, rack power, rollouts")
+    fl = fl.add_subparsers(dest="fleet_cmd", required=True)
+    rk = fl.add_parser("rack", help="define or list racks").add_subparsers(dest="rack_cmd",
+                                                                          required=True)
+    s = rk.add_parser("define")
+    s.set_defaults(fn=cmd_fleet)
+    s.add_argument("name")
+    s.add_argument("--budget", type=float, help="power budget in W")
+    s.add_argument("--cooling", type=float, help="cooling capacity in W")
+    s.add_argument("--site", default="")
+    s.add_argument("--units", type=int, help="rack height in U")
+    rk.add_parser("list").set_defaults(fn=cmd_fleet)
+    s = fl.add_parser("place", help="record which rack a unit is installed in")
+    s.set_defaults(fn=cmd_fleet)
+    s.add_argument("serial")
+    s.add_argument("--rack", required=True)
+    s.add_argument("--position", type=int)
+    for name, help_ in (("query", "units matching parts, firmware, rack or release"),
+                        ("recall", "every unit carrying a part or firmware, grouped for action")):
+        s = fl.add_parser(name, help=help_)
+        s.set_defaults(fn=cmd_fleet)
+        s.add_argument("--type", help="component type, e.g. gpu, dimm, psu")
+        s.add_argument("--model", help="model substring")
+        s.add_argument("--mpn", help="part-number substring")
+        s.add_argument("--firmware", action="append", metavar="EXPR",
+                       help="e.g. gpu_driver<535.104 or bios=3.4 (repeatable)")
+        s.add_argument("--rack")
+        s.add_argument("--release")
+        s.add_argument("--json", action="store_true")
+        s.add_argument("--csv", action="store_true")
+    s = fl.add_parser("power", help="declared draw per rack, now and after an upgrade")
+    s.set_defaults(fn=cmd_fleet)
+    s.add_argument("--upgrade-to", metavar="REV")
+    s.add_argument("--release", help="only units currently on this release move")
+    s.add_argument("--json", action="store_true")
+    s = fl.add_parser("rollout", help="plan a fleet change in rack-safe waves")
+    s.set_defaults(fn=cmd_fleet)
+    s.add_argument("--to", required=True, metavar="REV")
+    s.add_argument("--release", help="only units currently on this release")
+    s.add_argument("--max-per-rack", type=int, default=1)
+    s.add_argument("--wave-size", type=int, default=10)
+    s.add_argument("--allow-critical", action="store_true",
+                   help="schedule units even when the change has critical findings")
+    s.add_argument("--json", action="store_true")
+    s = fl.add_parser("netbox", help="import rack placement from NetBox")
+    s.set_defaults(fn=cmd_fleet)
+    s.add_argument("--devices", help="saved /api/dcim/devices/ JSON")
+    s.add_argument("--racks", help="saved /api/dcim/racks/ JSON")
+    s.add_argument("--url", help="NetBox base URL (fetches live; explicit network access)")
+    s.add_argument("--token-env", default="NETBOX_TOKEN")
+    s.add_argument("--budget-field", default="power_budget_w",
+                   help="rack custom field holding the power budget in W")
+    s.add_argument("--json", action="store_true")
+
+    r = sub.add_parser("remote", help="shared remotes (a directory on a shared mount)")
+    r = r.add_subparsers(dest="remote_cmd", required=True)
+    s = r.add_parser("add")
+    s.set_defaults(fn=cmd_remote)
+    s.add_argument("name")
+    s.add_argument("url", help="path or file:// URL of the shared directory")
+    r.add_parser("list").set_defaults(fn=cmd_remote)
+    s = add("push", cmd_push, "send revisions, tags and records to a remote (fast-forward only)")
+    s.add_argument("remote", nargs="?", default="origin")
+    s.add_argument("--branch")
+    s = add("fetch", cmd_pull, "download revisions, tags and records from a remote")
+    s.add_argument("remote", nargs="?", default="origin")
+    s = add("pull", cmd_pull, "fetch and fast-forward the current branch")
+    s.add_argument("remote", nargs="?", default="origin")
+    s.add_argument("--branch")
+    lk = sub.add_parser("lock", help="lock files on a remote instead of merging them")
+    lk = lk.add_subparsers(dest="lock_cmd", required=True)
+    for name in ("acquire", "release", "list"):
+        s = lk.add_parser(name)
+        s.set_defaults(fn=cmd_lock)
+        s.add_argument("--remote", default="origin")
+        if name != "list":
+            s.add_argument("path", help="repository-relative file path")
+        if name == "acquire":
+            s.add_argument("--ttl", type=float, default=8.0, help="hours (default 8)")
+            s.add_argument("--reason", default="")
+        if name == "release":
+            s.add_argument("--force", action="store_true", help="break someone else's lock")
+
+    t = sub.add_parser("token", help="API tokens bound to a user and a role")
+    t = t.add_subparsers(dest="token_cmd", required=True)
+    s = t.add_parser("create")
+    s.set_defaults(fn=cmd_token)
+    s.add_argument("user")
+    s.add_argument("--role", choices=ROLES, default="viewer")
+    s = t.add_parser("revoke")
+    s.set_defaults(fn=cmd_token)
+    s.add_argument("token_id")
+    t.add_parser("list").set_defaults(fn=cmd_token)
+
+    s = add("serve", cmd_serve, "serve the REST API and dashboard (authenticated by default)")
+    s.add_argument("--host", default="127.0.0.1", help="bind address (default: localhost only)")
+    s.add_argument("--port", type=int, default=8000)
+    s.add_argument("--insecure", action="store_true",
+                   help="serve without authentication; only on a trusted network")
+
+    add("mcp", cmd_mcp, "serve VCM to an AI agent over MCP (stdio, offline, read-only plus proposals)")
+    pp = sub.add_parser("proposal", help="changes an agent has asked for; a person decides")
+    pp = pp.add_subparsers(dest="prop_cmd", required=True)
+    s = pp.add_parser("list")
+    s.set_defaults(fn=cmd_proposal)
+    s.add_argument("--status", choices=["pending", "approved", "rejected"])
+    s.add_argument("--json", action="store_true")
+    s = pp.add_parser("show")
+    s.set_defaults(fn=cmd_proposal)
+    s.add_argument("id")
+    s.add_argument("--json", action="store_true")
+    s = pp.add_parser("approve", help="perform the proposed action as you")
+    s.set_defaults(fn=cmd_proposal)
+    s.add_argument("id")
+    s.add_argument("--by", help="your name (default: $VCM_AUTHOR)")
+    s.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
+    s = pp.add_parser("reject")
+    s.set_defaults(fn=cmd_proposal)
+    s.add_argument("id")
+    s.add_argument("--by", help="your name (default: $VCM_AUTHOR)")
+    s.add_argument("--reason", default="")
+
+    ev = sub.add_parser("eval", help="does an agent answer honestly from VCM's output?")
+    ev = ev.add_subparsers(dest="eval_cmd", required=True)
+    ev.add_parser("list").set_defaults(fn=cmd_eval)
+    s = ev.add_parser("run")
+    s.set_defaults(fn=cmd_eval)
+    s.add_argument("--agent", default="reference",
+                   help="'reference' (honest, must pass), a flawed built-in (sloppy, fabricating, "
+                   "overclaiming, incomplete, obedient: must fail), or a command to run your agent")
+    s.add_argument("--case", action="append", help="only this case (repeatable)")
+    s.add_argument("--timeout", type=float, default=900.0)
+    s.add_argument("--keep", help="keep the scenario repositories in this directory")
+    s.add_argument("--json", action="store_true")
+
+    au = sub.add_parser("audit", help="hash-chained audit log")
+    au = au.add_subparsers(dest="audit_cmd", required=True)
+    s = au.add_parser("log")
+    s.set_defaults(fn=cmd_audit)
+    s.add_argument("-n", type=int)
+    s.add_argument("--json", action="store_true")
+    s = au.add_parser("verify")
+    s.set_defaults(fn=cmd_audit)
+    s.add_argument("--json", action="store_true")
+
     c = sub.add_parser("catalog", help="component knowledge base behind rule-based findings")
     c = c.add_subparsers(dest="catalog_cmd", required=True)
     s = c.add_parser("list", help="every part the catalog knows")
@@ -524,6 +1452,34 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_catalog)
     s.add_argument("--rev", default="HEAD")
     s.add_argument("--json", action="store_true")
+    s = c.add_parser("priority", help="which parts your units use most, and how much of each "
+                     "has been checked")
+    s.set_defaults(fn=cmd_catalog)
+    s.add_argument("--type")
+    s.add_argument("--rev", help="count this revision instead of registered units")
+    s.add_argument("--top", type=int)
+    s.add_argument("--json", action="store_true")
+    s = c.add_parser("worksheet", help="a spreadsheet of values to check, most-used parts first")
+    s.set_defaults(fn=cmd_catalog)
+    s.add_argument("--type")
+    s.add_argument("--rev", help="rank by this revision instead of registered units")
+    s.add_argument("--top", type=int, help="only the N most-used parts")
+    s.add_argument("--out", help="write to this file (default: print)")
+    s = c.add_parser("review", help="record that a human checked part values against a source")
+    s.set_defaults(fn=cmd_catalog)
+    s.add_argument("mpn", nargs="?")
+    s.add_argument("--from-csv", help="a filled-in worksheet (all rows are checked first; "
+                   "nothing is applied if any is wrong)")
+    s.add_argument("--by", help="who checked it")
+    s.add_argument("--source", help="citation, e.g. 'datasheet DS-123 rev 2 p.4'")
+    s.add_argument("--set", action="append", metavar="FIELD=VALUE",
+                   help="correct a value while reviewing it (repeatable)")
+    s.add_argument("--confirm", action="append", metavar="FIELD",
+                   help="confirm an existing value as correct (repeatable)")
+    s.add_argument("--scope", choices=["user", "project"], default="project")
+    s = c.add_parser("unreviewed", help="parts whose values no human has verified, by field")
+    s.set_defaults(fn=cmd_catalog)
+    s.add_argument("--type")
     s = c.add_parser("import", help="add parts from a JSON or CSV file")
     s.set_defaults(fn=cmd_catalog)
     s.add_argument("file")

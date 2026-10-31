@@ -1,0 +1,30 @@
+{
+ "schema": "vcm-capture-expect/1",
+ "synthetic": true,
+ "notes": "Hand-written for the demo; not captured from a real machine.",
+ "components": {
+  "cpu": 2,
+  "dimm": 15,
+  "gpu": 8,
+  "nic": 2,
+  "nvme": 2,
+  "psu": 4
+ },
+ "covers": [
+  "cpu",
+  "dimm",
+  "disk",
+  "gpu",
+  "nic",
+  "nvme",
+  "psu"
+ ],
+ "firmware": [
+  "bios",
+  "bmc",
+  "gpu_driver",
+  "inventory:BIOS",
+  "inventory:BMC"
+ ],
+ "allow_problems": []
+}

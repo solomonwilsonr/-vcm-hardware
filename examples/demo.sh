@@ -8,6 +8,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="${VCM_DEMO_DIR:-$ROOT/demo-workspace}"
 SAMPLE="$ROOT/examples/gpu-node"
 export VCM_AUTHOR="${VCM_AUTHOR:-demo}"
+# demo signing keys live outside the repository, as real ones must
+export VCM_KEY_HOME="${VCM_KEY_HOME:-$(mktemp -d)}"
 
 if command -v vcm >/dev/null 2>&1; then
   vcm() { command vcm "$@"; }
@@ -44,6 +46,12 @@ step "5. What else could that change affect? (graph query and impact report)"
 vcm graph query --component GPU0 --rev v1.1
 vcm impact v1.0 v1.1
 
+step "5b. Is the base declaration even true? Compare v1.0 with what the machine reports"
+OBS="$SAMPLE/observed"
+vcm drift --rev v1.0 --attach --redfish "$OBS/redfish-capture.json" \
+  --nvidia-smi "$OBS/nvidia-smi.csv" || echo "(drift found, as expected: a failed DIMM and an older driver)"
+vcm impact v1.0 v1.1 | grep -E "machine|Measured|Projected" || true
+
 step "6. Validation (built-in checks on the committed configuration)"
 vcm validate --rev v1.0
 vcm validate --rev v1.1 --compare v1.0
@@ -53,6 +61,9 @@ vcm release create R1.0 --rev v1.0
 vcm release create R1.1 --rev v1.1 --out "$WORK/.vcm/R1.1.manifest.json"
 vcm release verify R1.0
 vcm release verify R1.1
+vcm key gen release-eng --trust
+vcm release sign R1.0 --key release-eng
+vcm release verify R1.0 --require-signature
 
 step "8. Physical units: register nodes against a release, with QR and passport"
 vcm device register NODE-0001 --release R1.0 --batch RACK-12
@@ -64,6 +75,16 @@ step "9. Which physical units are affected? (the fleet question)"
 vcm device affected --component GPU0 --value "NVIDIA A100 PCIe 40GB"
 vcm device affected --revision v1.1
 
+step "9b. Fleet: racks, queries, rack power after the upgrade, rollout waves"
+vcm fleet rack define RACK-12 --budget 8000
+vcm fleet rack define RACK-13 --budget 20000
+vcm fleet place NODE-0001 --rack RACK-12 --position 20
+vcm fleet place NODE-0002 --rack RACK-12 --position 24
+vcm fleet place NODE-0003 --rack RACK-13 --position 20
+vcm fleet query --type gpu --firmware "gpu_driver<525"
+vcm fleet power --upgrade-to v1.1 --release R1.0 || echo "(RACK-12 would exceed its budget)"
+vcm fleet rollout --to v1.1 --release R1.0
+
 step "10. Rollback plan v1.1 -> v1.0 (what is reversible without a site visit?)"
 vcm rollback plan v1.0 --from v1.1
 
@@ -74,6 +95,10 @@ vcm timeline
 
 step "12. Explain the change end to end (first 30 lines)"
 vcm explain v1.0 v1.1 | sed -n '1,30p'
+
+step "Audit trail: every commit, release, signature and registration, hash-chained"
+vcm audit log -n 8
+vcm audit verify
 
 step "Tamper check: corrupt a pinned blob and re-verify (expected to FAIL)"
 HASH="$(sha256sum firmware/driver.conf | cut -d' ' -f1)"

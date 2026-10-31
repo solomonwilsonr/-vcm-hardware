@@ -6,6 +6,8 @@ from vcm_core import Repository, VcmError, now_iso
 from vcm_diff import diff_revisions
 from vcm_validation import compare_validation, validate_revision
 
+from .policy import evaluate, load_policy, observed
+
 KIND = "prs"
 
 
@@ -23,6 +25,7 @@ def open_pr(repo: Repository, base: str, head: str, title: str, author: str = "u
           "diff": diff_revisions(repo, b, h), "impact": analyze(repo, b, h),
           "validation": compare_validation(repo, b, h), "comments": [], "approvals": []}
     repo.save_record(KIND, str(pr["id"]), pr)
+    repo.audit.append("pr.open", str(pr["id"]), {"base": b, "head": h}, actor=author)
     return get_pr(repo, pr["id"])
 
 
@@ -30,9 +33,12 @@ def get_pr(repo: Repository, pr_id: int) -> dict:
     pr = repo.load_record(KIND, str(pr_id))
     crit = [f["id"] for f in pr["impact"]["findings"] if f["severity"] == "critical"]
     regression = pr["validation"]["regression"]
+    pol = evaluate(load_policy(repo, pr["head"]), pr["impact"], "review",
+                   approvals=len(pr["approvals"]), observed_base=observed(repo, pr["base"]))
     pr["status"] = {"approvals": len(pr["approvals"]), "critical_findings": crit,
-                    "validation_regression": regression,
-                    "ready_for_merge": pr["state"] == "open" and bool(pr["approvals"]) and not regression}
+                    "validation_regression": regression, "policy": pol,
+                    "ready_for_merge": (pr["state"] == "open" and bool(pr["approvals"])
+                                        and not regression and pol["ok"])}
     return pr
 
 
@@ -61,6 +67,7 @@ def approve(repo: Repository, pr_id: int, by: str) -> dict:
         if any(a["by"] == by for a in pr["approvals"]):
             return
         pr["approvals"].append({"by": by, "at": now_iso()})
+        repo.audit.append("pr.approve", str(pr_id), {"head": pr["head"]}, actor=by)
     return _update(repo, pr_id, fn)
 
 
@@ -78,6 +85,9 @@ def render_pr(pr: dict) -> str:
          f"  validation: {pr['validation']['status']['from']} -> {pr['validation']['status']['to']}"
          f"{' (REGRESSION)' if s['validation_regression'] else ''}",
          f"  approvals: {', '.join(a['by'] for a in pr['approvals']) or 'none'}",
+         "  policy: " + ("none" if not s["policy"]["policy"] else "pass" if s["policy"]["ok"]
+                         else "FAIL (" + ", ".join(v["id"] for v in s["policy"]["violations"])
+                         + ")"),
          f"  ready for merge: {s['ready_for_merge']}"]
     for c in pr["comments"]:
         L.append(f"  comment by {c['author']}: {c['text']}")

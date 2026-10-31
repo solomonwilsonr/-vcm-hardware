@@ -88,11 +88,14 @@ Each run appends a new numbered entry to `evidence/<rev>/validation.json`; older
   "artifacts": {"firmware/main.c": {"hash": "...", "size": 120, "category": "firmware"}},
   "toolchain": {"vcm": "0.1.0", "python": "3.12.1", "platform": "...", "kicad_cli": "not installed"},
   "validation": {"status": "pass", "counts": {"error": 0, "warning": 0}, "evidence_hash": "...", "kicad_cli": "not run"},
-  "manifest_sha256": "<hash of the manifest without this field>"
+  "audit_head": "<hash of the newest audit event when the release was cut>",
+  "policy": {"present": true, "ok": true, "violations": [], "skipped": []},
+  "manifest_sha256": "<hash of the manifest without this field and without signatures>",
+  "signatures": [{"algorithm": "ed25519", "key_id": "...", "signer": "...", "purpose": "release", "signed_at": "...", "signature": "..."}]
 }
 ```
 
-`vcm release verify` checks: manifest self-hash, revision object, equality of manifest artifacts with the revision snapshot, every artifact blob re-hashed, and with `--worktree` the working files.
+`vcm release verify` checks: manifest self-hash, each signature against `trustdb.json`, revision object, equality of manifest artifacts with the revision snapshot, every artifact blob re-hashed, policy rules for the verify stage, with `--require-signature` that a trusted key signed it, and with `--worktree` the working files.
 
 ## Device record and passport
 
@@ -130,3 +133,91 @@ Tables `nodes(rev, id, type, name, props)` and `edges(rev, src, dst, type, props
   "external_loads": {"J2": {"typ_ma": 10, "peak_ma": 25}}
 }
 ```
+
+## Audit log (`.vcm/audit/events.jsonl`)
+
+One JSON object per line: `seq`, `at`, `actor`, `action` (`commit`, `tag`, `branch`,
+`release.create`, `release.sign`, `device.register`, `device.sign`, `device.place`, `observe`,
+`pr.open`, `pr.approve`, `policy.override`, `push`, `pull`, `lock.*`, `key.*`, `token.*`,
+`rack.define`, `netbox.import`, `catalog.review`), `subject`, `data`, `prev` (hash of the previous
+event, or 64 zeros) and `hash` (sha256 of the canonical JSON of the event without `hash`).
+
+## Signatures and trust
+
+`trustdb.json` (`vcm-trust/1`, committed): `keys` maps a key id (first 16 hex of the sha256 of the
+public key) to `{name, public_key, added_at, roles}`. A signature is
+`{algorithm: "ed25519", key_id, signer, purpose, signed_at, signature}` over the bytes
+`vcm-sig/1:<purpose>:<digest>`. Release manifests carry `signatures` (not part of
+`manifest_sha256`); device records carry `signatures` over a digest that excludes `signatures` and
+`location`.
+
+## Observed inventory (`vcm-observed/1`) and drift (`vcm-drift/1`)
+
+Observation: `node`, `sources`, `covers` (component types the sources can see), `components`
+(`type`, `model`, `mpn`, `serial`, `slot`, `props`), `firmware` (`bios`, `bmc`, `gpu_driver`,
+`cuda`, `inventory:<name>`), `telemetry` (`node_power_w` list, `gpu_power_w` per index). Drift:
+`status` (`in_sync` / `drifted`), `checked_types`, `unchecked_types`, `checked_firmware`, and
+`findings` (`kind`: `missing`, `unexpected`, `model_mismatch`, `firmware`), all `verified`.
+`vcm drift --attach` stores `{observation, drift, captured_at}` as evidence kind `observed`.
+
+## Racks and placement
+
+`.vcm/racks/<name>.json`: `name`, `power_budget_w`, `cooling_w`, `site`, `units`. A device record
+may carry `location: {rack, position}`.
+
+## Tokens (`.vcm/tokens.json`, mode 0600)
+
+`tokens` maps the sha256 of a token to `{user, role, created_at, id}`. The token itself is never
+stored.
+
+## Remotes
+
+`.vcm/remotes.json` maps a name to `{url}` (a directory). The remote directory holds `objects/`,
+`refs/heads`, `refs/tags`, `records/<kind>/`, `evidence/` and `locks/<sha256(path)[:32]>.json`
+(`path`, `holder`, `reason`, `acquired_at`, `expires_at`). Fetched remote heads are kept under
+`.vcm/refs/remotes/<name>/`.
+
+## Policy (`vcm-policy.json`, `vcm-policy/1`)
+
+`rules`: each has an `id`, at least one check (`forbid_severity`, `min_catalog_coverage`,
+`forbid_unknown_parts`, `require_approvals`, `forbid_validation_regression`,
+`require_observed_base`, `require_signed_release`), optional `stages` and optional `when`
+(`title_matches`, `severity_at_least`). Release manifests record
+`policy: {present, ok, violations, skipped, override?}`.
+
+## Proposals (`.vcm/proposals/P0001.json`)
+
+`id`, `action` (`release.create`, `pr.open`, `fleet.place`, `rack.define`, `device.register`),
+`args` (revisions already resolved to ids), `rationale`, `proposer` (`agent:<name>`), `status`
+(`pending`, `approved`, `rejected`), `created_at`, `summary`, `preview`; once decided,
+`decided_by`, `decided_at`, and `result` or `reason`. Audit actions: `proposal.create` (actor: the
+agent), `proposal.approve` and `proposal.reject` (actor: the person), plus the action's own events
+under the approver's name.
+
+## Capture folders (`tests/captures/<name>/`)
+
+`redfish.json`, `nvidia-smi.csv|xml`, optional `netbox.json`, and `expect.json`
+(`vcm-capture-expect/1`): `components` (counts by type), `covers`, `firmware` (keys found),
+`allow_problems` (doctor problems accepted for this machine), `notes`, `synthetic` (hand-written,
+exempt from the seal) and `sanitized: {sha256: {file: digest}, summary}` written by
+`vcm inventory sanitize`/`seal`. `vcm inventory doctor` returns `vcm-doctor/1`: `ok`, `problems`
+(capture incomplete or unusable), `warnings`, `components`, `covers`, `firmware`, `telemetry`.
+
+## Review worksheet (CSV)
+
+Columns: `part, type, field, value, current_source, units, decision, corrected_value,
+datasheet_source, checked_by, notes`. One row per unverified value, most-used parts first (`units`
+is how many registered units carry the part, or 1 per revision when none are registered). A person
+fills `decision` (`ok`, or `correct` with `corrected_value`), `datasheet_source` (document, revision,
+page) and `checked_by`. Blank decisions are skipped. Applying writes `sources[field] = {source,
+verified_by, verified_at}` to `vcm-catalog/reviews.json` and audits `catalog.review`.
+
+## Claims (`vcm_check_claims`) and eval answers
+
+A claim is `{"finding": "R001", "confidence_class"?, "severity"?, "title_contains"?, "quotes"?: []}`
+or `{"type": "none", severity?, confidence_class?, title_contains?}`, `{"type": "count", critical?,
+warning?, info?, verified?, rule_based?, speculative?}`, `{"type": "trust", catalog_values?,
+catalog_verified?}`. The result: `ok` (every claim true), `complete` (every critical finding
+mentioned), `honest` (both), per-claim `problems`, `unmentioned_critical`. An eval answer is
+`{"text": str, "claims": [claim]}`; an external agent receives `{id, question, repo, a, b,
+mcp_command}` on stdin.

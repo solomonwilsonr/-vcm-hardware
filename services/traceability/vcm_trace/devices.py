@@ -4,13 +4,18 @@ from __future__ import annotations
 import os
 import re
 
-from vcm_core import Repository, VcmError, now_iso
+from vcm_core import Repository, VcmError, canonical_json, now_iso, sha256_bytes
+from vcm_core.signing import load_secret, load_trust, sign_digest, verify_signature
 from vcm_diff import diff_revisions
 from vcm_parsers import design_from_revision
 
 from .qr import qr_svg
 
 SERIAL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+SIGN_PURPOSE = "passport"
+#: fields a signature does not cover: the signatures themselves, and placement, which changes
+#: whenever a unit is moved between racks without the unit itself changing
+_UNSIGNED = ("signatures", "location")
 
 
 def base_url() -> str:
@@ -28,9 +33,42 @@ def register_device(repo: Repository, serial: str, release: str, batch: str = ""
     record = {"serial": serial, "release": release, "revision": rel["revision"], "batch": batch,
               "notes": notes, "registered_at": now_iso(), "qr_payload": payload}
     repo.save_record("devices", serial, record)
+    repo.audit.append("device.register", serial, {"release": release,
+                                                  "revision": rel["revision"]})
     svg = repo.dir / "devices" / f"{serial}.svg"
     svg.write_text(qr_svg(payload))
     return {**record, "qr_svg": str(svg)}
+
+
+def device_digest(record: dict) -> str:
+    return sha256_bytes(canonical_json({k: v for k, v in record.items() if k not in _UNSIGNED}))
+
+
+def sign_device(repo: Repository, serial: str, key: str, signer: str | None = None) -> dict:
+    """Sign a unit's registration record: which release and revision it was built from."""
+    record = repo.load_record("devices", serial)
+    digest = device_digest(record)
+    sig = sign_digest(load_secret(key), signer or key, SIGN_PURPOSE, digest, now_iso())
+    ok, why = verify_signature(load_trust(repo.root), sig, SIGN_PURPOSE, digest)
+    if not ok:
+        raise VcmError(f"cannot sign: {why} (add it with `vcm key trust`)")
+    record["signatures"] = [s for s in record.get("signatures", [])
+                            if s["key_id"] != sig["key_id"]] + [sig]
+    repo.save_record("devices", serial, record)
+    repo.audit.append("device.sign", serial, {"key_id": sig["key_id"], "digest": digest},
+                      actor=sig["signer"])
+    return sig
+
+
+def verify_device(repo: Repository, record: dict) -> dict:
+    digest = device_digest(record)
+    trust = load_trust(repo.root)
+    results = []
+    for sig in record.get("signatures", []):
+        ok, why = verify_signature(trust, sig, SIGN_PURPOSE, digest)
+        results.append({"key_id": sig.get("key_id"), "signer": sig.get("signer"), "ok": ok,
+                        "detail": why})
+    return {"digest": digest, "signed": any(r["ok"] for r in results), "signatures": results}
 
 
 def list_devices(repo: Repository) -> list[dict]:
@@ -60,6 +98,8 @@ def passport(repo: Repository, serial: str) -> dict:
         "validation": ({"status": validation["status"], "counts": validation["counts"]}
                        if validation else None),
         "qr": {"payload": dev["qr_payload"], "svg": qr_svg(dev["qr_payload"])},
+        "location": dev.get("location"),
+        "authenticity": verify_device(repo, dev),
     }
 
 

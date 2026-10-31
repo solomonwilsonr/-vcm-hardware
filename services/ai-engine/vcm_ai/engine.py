@@ -20,6 +20,8 @@ from .rules_datacenter import datacenter_rules, is_node_design, node_meta
 
 VERIFIED, RULE_BASED, SPECULATIVE = "verified", "rule_based", "speculative"
 CLASSES = (VERIFIED, RULE_BASED, SPECULATIVE)
+#: bumped only on incompatible changes; docs/schemas/impact-report.schema.json describes it
+REPORT_SCHEMA = "vcm-impact/1"
 AMBIENT_C = 40.0
 
 
@@ -317,8 +319,9 @@ def part_ev(part: dict) -> dict:
 #: what an absent catalog entry actually costs, per domain. Being specific matters: a vague
 #: "no rules ran" is both unhelpful and, where manifest-declared values still drive rules, false.
 _SKIPPED_CHECKS = {
-    "node": ("driver-minimum, PCIe generation and power-connector checks, all of which read the "
-             "catalog"),
+    "node": ("driver, CUDA, BIOS and BMC minimum checks, the PCIe generation, power-connector, "
+             "memory-generation, socket and network-speed checks, all of which read the catalog "
+             "unless the manifest declares the value"),
     "board": ("current headroom, dropout, thermal, output-capacitor and pinout checks, all of "
               "which read the catalog"),
 }
@@ -475,6 +478,28 @@ def _speculative_node(b: _Builder, d: dict, rule_ids: list[str]) -> None:
               [{"type": "declared", "source": "node manifest"}], sorted(gpus)[:4])
 
 
+def trust_figure(findings: list[dict]) -> dict:
+    """How much of what the findings rest on has been checked by a named person.
+
+    Counts each distinct value once, however many findings cite it: catalog values (and how many
+    carry a ``verified_by``) versus values declared in the node manifest, which describe this node
+    as built but are not themselves checked by VCM.
+    """
+    catalog: dict[tuple, bool] = {}
+    declared: set[tuple] = set()
+    for f in findings:
+        for e in f["evidence"]:
+            if e.get("type") != "db":
+                continue
+            for key, v in (e.get("fields") or {}).items():
+                if v.get("from") == "catalog":
+                    catalog[(e.get("part"), key)] = bool(v.get("verified_by"))
+                elif v.get("from") == "node manifest":
+                    declared.add((e.get("ref"), key))
+    return {"catalog_values": len(catalog), "catalog_verified": sum(catalog.values()),
+            "declared_values": len(declared)}
+
+
 def analyze(repo, rev_a: str, rev_b: str, provider: LLMProvider | None = None,
             catalog: Catalog | None = None) -> dict:
     """Impact analysis from rev_a to rev_b. Fully offline unless a non-default provider is passed."""
@@ -505,6 +530,8 @@ def analyze(repo, rev_a: str, rev_b: str, provider: LLMProvider | None = None,
         _cap_rating_rules(b, d)
         _firmware_rules(b, d, rule_ids)
         _speculative(b, d, rule_ids)
+    from .plugins import run_plugins  # late: plugins import the node rules module
+    plugin_status = run_plugins(b, d)
     provider = provider or NoopProvider()
     summary_lines = [f"{f['id']} {f['title']}" for f in b.findings if f["confidence_class"] != SPECULATIVE]
     text = provider.complete("Summarise hardware change impact:\n" + "\n".join(summary_lines))
@@ -512,9 +539,12 @@ def analyze(repo, rev_a: str, rev_b: str, provider: LLMProvider | None = None,
         b.add(SPECULATIVE, "info", f"LLM commentary ({provider.name})", text, [{"type": "ref", "ref": provider.name}])
     counts = {c: sum(f["confidence_class"] == c for f in b.findings) for c in CLASSES}
     sev = {s: sum(f["severity"] == s for f in b.findings) for s in ("critical", "warning", "info")}
-    return {"from": a.id, "to": bb.id, "provider": provider.name,
+    return {"schema": REPORT_SCHEMA, "from": a.id, "to": bb.id, "provider": provider.name,
             "summary": {"by_class": counts, "by_severity": sev,
                         "changed_components": d["changed_refs"],
-                        "catalog_coverage": coverage["ratio"]},
+                        "catalog_coverage": coverage["ratio"],
+                        "trust": trust_figure(b.findings)},
             "catalog": {**coverage, **catalog.describe()},
+            "rules": {"domain": "node" if is_node_design(db) else "board",
+                      "plugins": plugin_status},
             "findings": b.findings, "required_retests": b.retests, "diff_summary": d["summary"]}

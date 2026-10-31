@@ -1,0 +1,475 @@
+{
+ "schema": "vcm-redfish-capture/1",
+ "note": "Synthetic capture of gpu-node-01 as built at v1.0, with DIMM11 failed and an older driver than declared. Hand-written for the demo, not captured from a real BMC.",
+ "resources": {
+  "/redfish/v1/Systems/1": {
+   "@odata.type": "#ComputerSystem.v1_20_0.ComputerSystem",
+   "Id": "1",
+   "HostName": "gpu-node-01",
+   "Model": "SYS-420GP-TNR",
+   "BiosVersion": "3.4"
+  },
+  "/redfish/v1/Managers/1": {
+   "@odata.type": "#Manager.v1_15_0.Manager",
+   "Id": "1",
+   "FirmwareVersion": "1.12.03"
+  },
+  "/redfish/v1/Systems/1/Processors/CPU0": {
+   "@odata.type": "#Processor.v1_16_0.Processor",
+   "Id": "CPU0",
+   "Socket": "CPU1",
+   "ProcessorType": "CPU",
+   "Model": "Intel(R) Xeon(R) Gold 6338 CPU @ 2.00GHz",
+   "TotalCores": 32,
+   "Status": {
+    "State": "Enabled"
+   }
+  },
+  "/redfish/v1/Systems/1/Processors/CPU1": {
+   "@odata.type": "#Processor.v1_16_0.Processor",
+   "Id": "CPU1",
+   "Socket": "CPU2",
+   "ProcessorType": "CPU",
+   "Model": "Intel(R) Xeon(R) Gold 6338 CPU @ 2.00GHz",
+   "TotalCores": 32,
+   "Status": {
+    "State": "Enabled"
+   }
+  },
+  "/redfish/v1/Systems/1/Processors/GPU0": {
+   "@odata.type": "#Processor.v1_16_0.Processor",
+   "Id": "GPU0",
+   "ProcessorType": "GPU",
+   "Model": "NVIDIA A100-PCIE-40GB",
+   "SerialNumber": "142122100000",
+   "Location": {
+    "PartLocation": {
+     "ServiceLabel": "PCIE_SLOT1"
+    }
+   },
+   "Status": {
+    "State": "Enabled"
+   }
+  },
+  "/redfish/v1/Systems/1/Processors/GPU1": {
+   "@odata.type": "#Processor.v1_16_0.Processor",
+   "Id": "GPU1",
+   "ProcessorType": "GPU",
+   "Model": "NVIDIA A100-PCIE-40GB",
+   "SerialNumber": "142122100001",
+   "Location": {
+    "PartLocation": {
+     "ServiceLabel": "PCIE_SLOT2"
+    }
+   },
+   "Status": {
+    "State": "Enabled"
+   }
+  },
+  "/redfish/v1/Systems/1/Processors/GPU2": {
+   "@odata.type": "#Processor.v1_16_0.Processor",
+   "Id": "GPU2",
+   "ProcessorType": "GPU",
+   "Model": "NVIDIA A100-PCIE-40GB",
+   "SerialNumber": "142122100002",
+   "Location": {
+    "PartLocation": {
+     "ServiceLabel": "PCIE_SLOT3"
+    }
+   },
+   "Status": {
+    "State": "Enabled"
+   }
+  },
+  "/redfish/v1/Systems/1/Processors/GPU3": {
+   "@odata.type": "#Processor.v1_16_0.Processor",
+   "Id": "GPU3",
+   "ProcessorType": "GPU",
+   "Model": "NVIDIA A100-PCIE-40GB",
+   "SerialNumber": "142122100003",
+   "Location": {
+    "PartLocation": {
+     "ServiceLabel": "PCIE_SLOT4"
+    }
+   },
+   "Status": {
+    "State": "Enabled"
+   }
+  },
+  "/redfish/v1/Systems/1/Processors/GPU4": {
+   "@odata.type": "#Processor.v1_16_0.Processor",
+   "Id": "GPU4",
+   "ProcessorType": "GPU",
+   "Model": "NVIDIA A100-PCIE-40GB",
+   "SerialNumber": "142122100004",
+   "Location": {
+    "PartLocation": {
+     "ServiceLabel": "PCIE_SLOT5"
+    }
+   },
+   "Status": {
+    "State": "Enabled"
+   }
+  },
+  "/redfish/v1/Systems/1/Processors/GPU5": {
+   "@odata.type": "#Processor.v1_16_0.Processor",
+   "Id": "GPU5",
+   "ProcessorType": "GPU",
+   "Model": "NVIDIA A100-PCIE-40GB",
+   "SerialNumber": "142122100005",
+   "Location": {
+    "PartLocation": {
+     "ServiceLabel": "PCIE_SLOT6"
+    }
+   },
+   "Status": {
+    "State": "Enabled"
+   }
+  },
+  "/redfish/v1/Systems/1/Processors/GPU6": {
+   "@odata.type": "#Processor.v1_16_0.Processor",
+   "Id": "GPU6",
+   "ProcessorType": "GPU",
+   "Model": "NVIDIA A100-PCIE-40GB",
+   "SerialNumber": "142122100006",
+   "Location": {
+    "PartLocation": {
+     "ServiceLabel": "PCIE_SLOT7"
+    }
+   },
+   "Status": {
+    "State": "Enabled"
+   }
+  },
+  "/redfish/v1/Systems/1/Processors/GPU7": {
+   "@odata.type": "#Processor.v1_16_0.Processor",
+   "Id": "GPU7",
+   "ProcessorType": "GPU",
+   "Model": "NVIDIA A100-PCIE-40GB",
+   "SerialNumber": "142122100007",
+   "Location": {
+    "PartLocation": {
+     "ServiceLabel": "PCIE_SLOT8"
+    }
+   },
+   "Status": {
+    "State": "Enabled"
+   }
+  },
+  "/redfish/v1/Systems/1/Memory/DIMM00": {
+   "@odata.type": "#Memory.v1_17_0.Memory",
+   "Id": "DIMM00",
+   "DeviceLocator": "DIMM_A0",
+   "Status": {
+    "State": "Enabled"
+   },
+   "CapacityMiB": 32768,
+   "MemoryDeviceType": "DDR4",
+   "OperatingSpeedMhz": 3200,
+   "PartNumber": "M393A4K40DB3-CWE    ",
+   "SerialNumber": "S00000"
+  },
+  "/redfish/v1/Systems/1/Memory/DIMM01": {
+   "@odata.type": "#Memory.v1_17_0.Memory",
+   "Id": "DIMM01",
+   "DeviceLocator": "DIMM_A1",
+   "Status": {
+    "State": "Enabled"
+   },
+   "CapacityMiB": 32768,
+   "MemoryDeviceType": "DDR4",
+   "OperatingSpeedMhz": 3200,
+   "PartNumber": "M393A4K40DB3-CWE    ",
+   "SerialNumber": "S00001"
+  },
+  "/redfish/v1/Systems/1/Memory/DIMM02": {
+   "@odata.type": "#Memory.v1_17_0.Memory",
+   "Id": "DIMM02",
+   "DeviceLocator": "DIMM_A2",
+   "Status": {
+    "State": "Enabled"
+   },
+   "CapacityMiB": 32768,
+   "MemoryDeviceType": "DDR4",
+   "OperatingSpeedMhz": 3200,
+   "PartNumber": "M393A4K40DB3-CWE    ",
+   "SerialNumber": "S00002"
+  },
+  "/redfish/v1/Systems/1/Memory/DIMM03": {
+   "@odata.type": "#Memory.v1_17_0.Memory",
+   "Id": "DIMM03",
+   "DeviceLocator": "DIMM_A3",
+   "Status": {
+    "State": "Enabled"
+   },
+   "CapacityMiB": 32768,
+   "MemoryDeviceType": "DDR4",
+   "OperatingSpeedMhz": 3200,
+   "PartNumber": "M393A4K40DB3-CWE    ",
+   "SerialNumber": "S00003"
+  },
+  "/redfish/v1/Systems/1/Memory/DIMM04": {
+   "@odata.type": "#Memory.v1_17_0.Memory",
+   "Id": "DIMM04",
+   "DeviceLocator": "DIMM_A4",
+   "Status": {
+    "State": "Enabled"
+   },
+   "CapacityMiB": 32768,
+   "MemoryDeviceType": "DDR4",
+   "OperatingSpeedMhz": 3200,
+   "PartNumber": "M393A4K40DB3-CWE    ",
+   "SerialNumber": "S00004"
+  },
+  "/redfish/v1/Systems/1/Memory/DIMM05": {
+   "@odata.type": "#Memory.v1_17_0.Memory",
+   "Id": "DIMM05",
+   "DeviceLocator": "DIMM_A5",
+   "Status": {
+    "State": "Enabled"
+   },
+   "CapacityMiB": 32768,
+   "MemoryDeviceType": "DDR4",
+   "OperatingSpeedMhz": 3200,
+   "PartNumber": "M393A4K40DB3-CWE    ",
+   "SerialNumber": "S00005"
+  },
+  "/redfish/v1/Systems/1/Memory/DIMM06": {
+   "@odata.type": "#Memory.v1_17_0.Memory",
+   "Id": "DIMM06",
+   "DeviceLocator": "DIMM_A6",
+   "Status": {
+    "State": "Enabled"
+   },
+   "CapacityMiB": 32768,
+   "MemoryDeviceType": "DDR4",
+   "OperatingSpeedMhz": 3200,
+   "PartNumber": "M393A4K40DB3-CWE    ",
+   "SerialNumber": "S00006"
+  },
+  "/redfish/v1/Systems/1/Memory/DIMM07": {
+   "@odata.type": "#Memory.v1_17_0.Memory",
+   "Id": "DIMM07",
+   "DeviceLocator": "DIMM_A7",
+   "Status": {
+    "State": "Enabled"
+   },
+   "CapacityMiB": 32768,
+   "MemoryDeviceType": "DDR4",
+   "OperatingSpeedMhz": 3200,
+   "PartNumber": "M393A4K40DB3-CWE    ",
+   "SerialNumber": "S00007"
+  },
+  "/redfish/v1/Systems/1/Memory/DIMM08": {
+   "@odata.type": "#Memory.v1_17_0.Memory",
+   "Id": "DIMM08",
+   "DeviceLocator": "DIMM_B0",
+   "Status": {
+    "State": "Enabled"
+   },
+   "CapacityMiB": 32768,
+   "MemoryDeviceType": "DDR4",
+   "OperatingSpeedMhz": 3200,
+   "PartNumber": "M393A4K40DB3-CWE    ",
+   "SerialNumber": "S00008"
+  },
+  "/redfish/v1/Systems/1/Memory/DIMM09": {
+   "@odata.type": "#Memory.v1_17_0.Memory",
+   "Id": "DIMM09",
+   "DeviceLocator": "DIMM_B1",
+   "Status": {
+    "State": "Enabled"
+   },
+   "CapacityMiB": 32768,
+   "MemoryDeviceType": "DDR4",
+   "OperatingSpeedMhz": 3200,
+   "PartNumber": "M393A4K40DB3-CWE    ",
+   "SerialNumber": "S00009"
+  },
+  "/redfish/v1/Systems/1/Memory/DIMM10": {
+   "@odata.type": "#Memory.v1_17_0.Memory",
+   "Id": "DIMM10",
+   "DeviceLocator": "DIMM_B2",
+   "Status": {
+    "State": "Enabled"
+   },
+   "CapacityMiB": 32768,
+   "MemoryDeviceType": "DDR4",
+   "OperatingSpeedMhz": 3200,
+   "PartNumber": "M393A4K40DB3-CWE    ",
+   "SerialNumber": "S00010"
+  },
+  "/redfish/v1/Systems/1/Memory/DIMM11": {
+   "@odata.type": "#Memory.v1_17_0.Memory",
+   "Id": "DIMM11",
+   "DeviceLocator": "DIMM_B3",
+   "Status": {
+    "State": "Absent"
+   }
+  },
+  "/redfish/v1/Systems/1/Memory/DIMM12": {
+   "@odata.type": "#Memory.v1_17_0.Memory",
+   "Id": "DIMM12",
+   "DeviceLocator": "DIMM_B4",
+   "Status": {
+    "State": "Enabled"
+   },
+   "CapacityMiB": 32768,
+   "MemoryDeviceType": "DDR4",
+   "OperatingSpeedMhz": 3200,
+   "PartNumber": "M393A4K40DB3-CWE    ",
+   "SerialNumber": "S00012"
+  },
+  "/redfish/v1/Systems/1/Memory/DIMM13": {
+   "@odata.type": "#Memory.v1_17_0.Memory",
+   "Id": "DIMM13",
+   "DeviceLocator": "DIMM_B5",
+   "Status": {
+    "State": "Enabled"
+   },
+   "CapacityMiB": 32768,
+   "MemoryDeviceType": "DDR4",
+   "OperatingSpeedMhz": 3200,
+   "PartNumber": "M393A4K40DB3-CWE    ",
+   "SerialNumber": "S00013"
+  },
+  "/redfish/v1/Systems/1/Memory/DIMM14": {
+   "@odata.type": "#Memory.v1_17_0.Memory",
+   "Id": "DIMM14",
+   "DeviceLocator": "DIMM_B6",
+   "Status": {
+    "State": "Enabled"
+   },
+   "CapacityMiB": 32768,
+   "MemoryDeviceType": "DDR4",
+   "OperatingSpeedMhz": 3200,
+   "PartNumber": "M393A4K40DB3-CWE    ",
+   "SerialNumber": "S00014"
+  },
+  "/redfish/v1/Systems/1/Memory/DIMM15": {
+   "@odata.type": "#Memory.v1_17_0.Memory",
+   "Id": "DIMM15",
+   "DeviceLocator": "DIMM_B7",
+   "Status": {
+    "State": "Enabled"
+   },
+   "CapacityMiB": 32768,
+   "MemoryDeviceType": "DDR4",
+   "OperatingSpeedMhz": 3200,
+   "PartNumber": "M393A4K40DB3-CWE    ",
+   "SerialNumber": "S00015"
+  },
+  "/redfish/v1/Chassis/1/Power": {
+   "@odata.type": "#Power.v1_7_1.Power",
+   "PowerSupplies": [
+    {
+     "MemberId": "0",
+     "Name": "PSU0",
+     "Model": "PWS-2K04A-1R",
+     "PartNumber": "PWS-2K04A-1R",
+     "SerialNumber": "P0000",
+     "PowerCapacityWatts": 2000,
+     "Status": {
+      "State": "Enabled"
+     }
+    },
+    {
+     "MemberId": "1",
+     "Name": "PSU1",
+     "Model": "PWS-2K04A-1R",
+     "PartNumber": "PWS-2K04A-1R",
+     "SerialNumber": "P0001",
+     "PowerCapacityWatts": 2000,
+     "Status": {
+      "State": "Enabled"
+     }
+    },
+    {
+     "MemberId": "2",
+     "Name": "PSU2",
+     "Model": "PWS-2K04A-1R",
+     "PartNumber": "PWS-2K04A-1R",
+     "SerialNumber": "P0002",
+     "PowerCapacityWatts": 2000,
+     "Status": {
+      "State": "Enabled"
+     }
+    },
+    {
+     "MemberId": "3",
+     "Name": "PSU3",
+     "Model": "PWS-2K04A-1R",
+     "PartNumber": "PWS-2K04A-1R",
+     "SerialNumber": "P0003",
+     "PowerCapacityWatts": 2000,
+     "Status": {
+      "State": "Enabled"
+     }
+    }
+   ],
+   "PowerControl": [
+    {
+     "PowerConsumedWatts": 2710
+    }
+   ]
+  },
+  "/redfish/v1/Chassis/1/EnvironmentMetrics": {
+   "@odata.type": "#EnvironmentMetrics.v1_3_0.EnvironmentMetrics",
+   "PowerWatts": {
+    "Reading": 2865
+   }
+  },
+  "/redfish/v1/Chassis/1/NetworkAdapters/NIC0": {
+   "@odata.type": "#NetworkAdapter.v1_9_0.NetworkAdapter",
+   "Id": "NIC0",
+   "Model": "Mellanox ConnectX-6 Dx",
+   "PartNumber": "MCX623106AN-CDAT",
+   "Status": {
+    "State": "Enabled"
+   }
+  },
+  "/redfish/v1/Chassis/1/NetworkAdapters/NIC1": {
+   "@odata.type": "#NetworkAdapter.v1_9_0.NetworkAdapter",
+   "Id": "NIC1",
+   "Model": "Mellanox ConnectX-6 Dx",
+   "PartNumber": "MCX623106AN-CDAT",
+   "Status": {
+    "State": "Enabled"
+   }
+  },
+  "/redfish/v1/Systems/1/Storage/1/Drives/0": {
+   "@odata.type": "#Drive.v1_17_0.Drive",
+   "Id": "0",
+   "Model": "SAMSUNG MZQL23T8HCLS-00A07",
+   "PartNumber": "MZQL23T8HCLS-00A07",
+   "Protocol": "NVMe",
+   "CapacityBytes": 3840755982336,
+   "Status": {
+    "State": "Enabled"
+   }
+  },
+  "/redfish/v1/Systems/1/Storage/1/Drives/1": {
+   "@odata.type": "#Drive.v1_17_0.Drive",
+   "Id": "1",
+   "Model": "SAMSUNG MZQL23T8HCLS-00A07",
+   "PartNumber": "MZQL23T8HCLS-00A07",
+   "Protocol": "NVMe",
+   "CapacityBytes": 3840755982336,
+   "Status": {
+    "State": "Enabled"
+   }
+  },
+  "/redfish/v1/UpdateService/FirmwareInventory/BMC": {
+   "@odata.type": "#SoftwareInventory.v1_9_0.SoftwareInventory",
+   "Id": "BMC",
+   "Name": "BMC",
+   "Version": "1.12.03"
+  },
+  "/redfish/v1/UpdateService/FirmwareInventory/BIOS": {
+   "@odata.type": "#SoftwareInventory.v1_9_0.SoftwareInventory",
+   "Id": "BIOS",
+   "Name": "BIOS",
+   "Version": "3.4"
+  }
+ }
+}

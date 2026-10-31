@@ -25,7 +25,11 @@ NUMERIC_FIELDS = ("iout_max_ma", "vin_max", "vout", "dropout_v", "min_cout_uf", 
                   "supply_vmax", "vmax",
                   # datacenter node fields
                   "tdp_w", "watts", "pcie_gen", "pcie_lanes", "memory_gb", "capacity_gb",
-                  "slot_width")
+                  "slot_width", "memory_channels", "max_memory_mts", "speed_gbps")
+#: every field a rule may read; a part is ``reviewed`` only when each one it carries is verified
+REVIEWABLE = NUMERIC_FIELDS + ("min_driver", "min_cuda", "min_bios", "min_bmc",
+                               "power_connector", "memory_type", "socket", "form_factor",
+                               "output_cap", "package")
 
 USER_CATALOG = Path(os.environ.get("VCM_CATALOG_HOME", Path.home() / ".vcm" / "catalog"))
 PROJECT_CATALOG_DIR = "vcm-catalog"
@@ -186,6 +190,47 @@ class Catalog:
             layers[origin] = layers.get(origin, 0) + 1
         return {"parts": len(self.parts), "layers": layers,
                 "reviewed": sum(1 for p in self.parts if p.get("reviewed"))}
+
+
+def field_source(part: dict, key: str) -> dict:
+    """Where one value of a part came from: its own attribution if it has one, else the part's.
+
+    ``sources`` maps a field to a string (a citation) or to
+    ``{"source": ..., "verified_by": ..., "verified_at": ...}``. Only the latter counts as checked.
+    """
+    raw = (part.get("sources") or {}).get(key)
+    if isinstance(raw, dict):
+        return {"source": raw.get("source", ""), "verified_by": raw.get("verified_by", ""),
+                "verified_at": raw.get("verified_at", "")}
+    return {"source": raw or part.get("source", ""), "verified_by": "", "verified_at": ""}
+
+
+def unverified_fields(part: dict) -> list[str]:
+    return [k for k in REVIEWABLE if part.get(k) not in (None, "")
+            and not field_source(part, k)["verified_by"]]
+
+
+def review_part(part: dict, values: dict, source: str, by: str, at: str,
+                confirm: list[str] | tuple[str, ...] = ()) -> dict:
+    """A copy of ``part`` with ``values`` set and those fields (plus ``confirm``) attributed to a
+    named human checking a named source. ``reviewed`` becomes true only once every rule-relevant
+    field the part carries has been checked this way."""
+    if not source or not by:
+        raise CatalogError("a review needs both a source citation and a reviewer")
+    out = {k: v for k, v in part.items() if not k.startswith("_")}
+    out["sources"] = dict(out.get("sources") or {})
+    for key in [*values, *confirm]:
+        if key not in REVIEWABLE:
+            raise CatalogError(f"{key} is not a reviewable field ({', '.join(REVIEWABLE)})")
+        if key in values:
+            out[key] = values[key]
+        elif out.get(key) in (None, ""):
+            raise CatalogError(f"cannot confirm {key}: the part has no value for it")
+        out["sources"][key] = {"source": source, "verified_by": by, "verified_at": at}
+    norm = _normalise(out, "review")
+    out = {k: v for k, v in norm.items() if k != "_origin"}
+    out["reviewed"] = not unverified_fields(out)
+    return out
 
 
 _DEFAULT: Catalog | None = None

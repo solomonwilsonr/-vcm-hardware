@@ -176,3 +176,13 @@ def test_store_and_event_feed(client):
     client.delete("/api/locks", params={"path": "a.txt", "by": "alice"})
     after = client.get("/api/events", params={"after": feed["cursor"]}).json()["events"]
     assert [(e["kind"], e["action"]) for e in after] == [("locks", "deleted")]
+
+
+def test_keys_endpoint_lists_public_details_only(client, tmp_path, monkeypatch):
+    monkeypatch.setenv("VCM_KEY_DIR", str(tmp_path / "keys"))
+    assert client.get("/api/keys").json() == []
+    from vcm_core import signing
+    signing.generate_key("release-bot", passphrase="pw")
+    listed = client.get("/api/keys").json()
+    assert [(k["name"], k["encrypted"]) for k in listed] == [("release-bot", True)]
+    assert "secret" not in str(listed) and "public" not in str(listed)

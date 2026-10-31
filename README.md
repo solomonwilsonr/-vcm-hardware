@@ -2,6 +2,28 @@
 
 **Every hardware change has a blast radius. VCM makes it traceable.**
 
+![VCM comparing v1.0 and v1.1 of a GPU node: "PSU_BANK cannot supply the node under its redundancy policy", with every finding labelled verified, rule-based or speculative](docs/img/compare.png)
+
+## Try it in one minute
+
+```bash
+git clone <this repo> && cd -vcm-hardware
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e ".[api]"
+make ui          # builds a sample GPU-node workspace and opens the dashboard, already signed in
+```
+
+No account, no API key, no network. You land on a real finding: swapping 8 A100s for H100 NVL leaves
+the node **190 W short of its power budget**, and VCM shows exactly which numbers say so. Then click
+around: **Lineage** shows which built units carry a part, **Review** shows an open PR with a critical
+finding and a part the catalog has never heard of, **Locks** shows someone else holding a file.
+
+| Lineage: which built units carry this part | Review: what this change puts at risk |
+|---|---|
+| ![Lineage view](docs/img/lineage.png) | ![Review view](docs/img/review.png) |
+
+Prefer the terminal? `make demo` runs the same story as a command-line walkthrough.
+
 VCM is an engineering-aware version-control and intelligence layer for **datacenter node and rack
 hardware**. You commit a node's configuration the way you commit code; VCM tells you what a change
 to it breaks, which physical units are affected, and how much to trust each thing it says.
@@ -24,6 +46,7 @@ It is built around three questions:
 ## How to test (2 minutes, no accounts, no network)
 
 You need Python 3.11+ and nothing else: no API keys, no faucet, no services. Everything runs offline.
+`make ui` (above) is the fastest look; this section is the thorough one.
 
 ```bash
 git clone <this repo> && cd -vcm-hardware     # or open your checkout

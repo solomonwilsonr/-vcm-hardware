@@ -278,6 +278,7 @@
     releases: { selected: null },
     review: { selected: null },
     me: { identity: null, role: null, authenticated: false },
+    keys: [],
     store: { backend: "local", scope: null, realtime: { enabled: false } },
     feed: [],
     ui: {},
@@ -889,8 +890,9 @@
       clear(out).append(panel("Releases", { count: rels.length, flush: true },
         can("maintainer")
           ? h("div", { class: "toolbar", style: "padding:10px 12px;border-bottom:1px solid var(--line)" },
-              field("Signing key (on the server)", h("input", { id: "rl-key", size: 16,
-                placeholder: "release-bot" })))
+              field("Sign with", select("rl-key", (S.keys.length ? S.keys : [{ name: "" }]).map((k) =>
+                ({ value: k.name, label: k.name ? k.name + "  (" + shortHash(k.key_id, 8) + ")"
+                  : "no signing keys on the server" })), null, null)))
           : null,
         table(["Name", "Revision", "Created", "Validation", "Signed", "manifest sha256", "Units", ""],
           rels.map((r) => h("tr", {},
@@ -927,7 +929,11 @@
 
   async function signRelease(name, btn) {
     const key = (byId("rl-key") || {}).value;
-    if (!key || !key.trim()) { byId("rl-key").focus(); return; }
+    if (!key || !key.trim()) {
+      clear(byId("rl-detail")).append(errBox(new Error(
+        "no signing key on the server: run `vcm key gen <name> --trust` there first")));
+      return;
+    }
     btn.disabled = true;
     try {
       await api("/api/releases/" + encodeURIComponent(name) + "/signatures",
@@ -1053,9 +1059,9 @@
     mount(main,
       h("div", { class: "view-head" },
         h("h1", {}, "Hardware pull requests"),
-        h("p", {}, "A review record attached to a revision pair. Merging fast-forwards the base " +
-          "branch; there is no merge commit. Behind API auth the author, approvers and merger " +
-          "are the token's identity, and a signed approval ties an approver to a trusted key.")),
+        h("p", {}, "Each review carries the semantic diff, the impact findings and the validation " +
+          "result for a proposed change. Approvals gate the merge, and merging simply moves the " +
+          "base branch forward: there is no merge commit.")),
       out);
     S.ui.prOut = out;
     loadPrs();
@@ -1238,9 +1244,9 @@
     mount(main,
       h("div", { class: "view-head" },
         h("h1", {}, "File locks"),
-        h("p", {}, "A PCB layout or a CAD file cannot be merged, so VCM locks instead: one holder " +
-          "at a time, with an expiry. While you hold a lock, other people's commits and pushes " +
-          "that touch that file are refused." +
+        h("p", {}, "A CAD drawing or a firmware image cannot be merged, so VCM locks instead: one " +
+          "holder at a time, with an expiry. While you hold a lock, other people's commits and " +
+          "pushes that touch that file are refused." +
           (S.store.backend === "appwrite"
             ? " Locks live in the shared Appwrite table, so everyone on the team sees this list."
             : " Locks are local to this repository; use the Appwrite store to share them."))),
@@ -1522,8 +1528,11 @@
       h("section", { class: "panel signin" },
         h("header", {}, h("h2", {}, "Sign in")),
         h("div", { class: "body" },
-          h("p", {}, "This VCM API needs an access token. Ask whoever started it, or see " +
-            "VCM_API_TOKENS. The token stays in this tab only and is sent to this server alone."),
+          h("p", {}, "This VCM API needs an access token. Starting it yourself? It was set with " +
+            "VCM_API_TOKEN (or VCM_API_TOKENS). Just exploring? Run `make ui` for a sample " +
+            "workspace that opens already signed in."),
+          h("p", { style: "font-size:11.5px" }, "The token stays in this tab and is only ever sent " +
+            "to this server."),
           message ? errBox({ message }) : null,
           h("div", { class: "toolbar" }, input,
             h("button", { class: "primary", type: "button", onclick: go }, "Sign in")))));
@@ -1563,7 +1572,8 @@
     mount(box,
       h("span", {}, h("span", { class: "dot " + (ok ? "up" : "down") }), " ",
         h("span", { class: "k" }, "api "), ok ? "ok" : "down"),
-      h("span", {}, h("span", { class: "k" }, "repo "), info.path),
+      h("span", { title: info.path }, h("span", { class: "k" }, "repo "),
+        info.path.split("/").filter(Boolean).pop() || info.path),
       h("span", {}, h("span", { class: "k" }, "branch "), info.branch || "detached"),
       h("span", { title: info.head }, h("span", { class: "k" }, "head "),
         shortHash(info.head, 10)),
@@ -1586,21 +1596,36 @@
 
   let booted = false;
 
+  /* `vcm_api --demo` opens http://host/#token=...: the fragment never leaves the browser. Take the
+     token, remember it for this tab, and scrub it from the address bar and history. */
+  function takeTokenFromUrl() {
+    const m = location.hash.match(/[#&]token=([^&]+)/);
+    if (!m) return;
+    token.set(decodeURIComponent(m[1]));
+    history.replaceState(null, "", location.pathname + location.search + "#/compare");
+  }
+
   async function boot() {
-    if (!booted) initTheme();
+    if (!booted) { initTheme(); takeTokenFromUrl(); }
     try {
       const health = await api("/api/health").catch(() => null);
       const me = await api("/api/whoami");  // the first call that needs a token
       S.me = { identity: me.identity, role: me.role, authenticated: !!me.authenticated };
       S.store = await api("/api/store").catch(() => S.store);
+      S.keys = await api("/api/keys").catch(() => []);
       const [info, revs, devices] = await Promise.all([
         api("/api/repo"), api("/api/timeline"), api("/api/devices").catch(() => []),
       ]);
       S.repo = info;
       S.revs = revs;
       S.devices = devices;
-      S.cmp.a = revs.length > 1 ? revs[1].id : (revs[0] ? revs[0].id : null);
-      S.cmp.b = revs.length ? revs[0].id : null;
+      // Lead with a story, not the last commit: previous tag -> latest tag when there are two
+      // (v1.0 -> v1.1), otherwise the last two revisions.
+      const tagged = revs.filter((r) => r.tags && r.tags.length);
+      const pair = tagged.length > 1 ? [tagged[1], tagged[0]] : revs.length > 1 ? [revs[1], revs[0]]
+        : [revs[0], revs[0]];
+      S.cmp.a = pair[0] ? pair[0].id : null;
+      S.cmp.b = pair[1] ? pair[1].id : null;
       S.lineage.rev = S.cmp.b || "HEAD";
       S.lineage.ref = S.lineage.ref || exampleRef();
       repoMeta(info, health && health.status === "ok");

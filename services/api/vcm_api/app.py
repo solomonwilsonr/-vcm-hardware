@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from vcm_ai import analyze, to_markdown
 from vcm_core import Repository, VcmError
-from vcm_core.signing import load_trustdb
+from vcm_core.signing import list_keys, load_trustdb
 from vcm_diff import diff_revisions, render_text
 from vcm_graph import build_graph
 from vcm_graph.backends.appwrite_records import realtime_config
@@ -226,6 +226,12 @@ def create_app(repo_path: str | None = None, *, tokens: dict[str, str] | None = 
     @app.post("/api/releases/{name}/signatures", status_code=201)
     def release_sign(name: str, body: SignIn):
         return sign_release(repo(), name, body.key)
+
+    @app.get("/api/keys")
+    def keys():
+        """Signing keys held on this server (public details only), for the dashboard's picker."""
+        return [{"name": k["name"], "key_id": k["key_id"], "encrypted": k["encrypted"]}
+                for k in list_keys()]
 
     @app.get("/api/trust")
     def trust():

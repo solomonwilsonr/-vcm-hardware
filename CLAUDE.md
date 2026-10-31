@@ -34,6 +34,7 @@ make install     # pip install -e ".[dev]"
 make test        # pytest -q
 make lint        # ruff check .
 make demo        # bash examples/demo.sh — full end-to-end flow
+make ui          # python -m vcm_api --demo --open — seeded dashboard, already signed in
 make clean
 ```
 
@@ -166,6 +167,12 @@ rather than claiming none ran.
   do). Appwrite rows are scoped (`appwrite_scope`); rows without a matching scope are invisible.
 - **The change feed must never carry record content**, and `vcm_events` is the only table that may be
   world-readable (opt-in, for Realtime). Do not add fields to events without re-checking that.
+- **The first-run experience is a feature and is tested.** `vcm_api/demo.py` builds the demo a
+  stranger sees (`make ui`); `tests/test_demo.py` locks the headline (PSU_BANK shortfall, driver floor,
+  a PR with a critical finding and an uncatalogued part, a signed and an unsigned release). The
+  dashboard opens on previous-tag -> latest-tag, not the last commit, so appending an unrelated commit
+  to a demo cannot bury the story again. No user-facing "PCB" wording, and never make the first screen
+  a form: the demo URL carries the token in the fragment so there is no sign-in wall.
 - Dashboard JS: any loader that can be refreshed by a live event must use `begin`/`current` (latest
   request wins) and `rescue` (keep typed input), or a late response overwrites newer state. The UI
   is covered by `tests/test_dashboard_ui.py` (Playwright; skips if Node/Playwright are absent).

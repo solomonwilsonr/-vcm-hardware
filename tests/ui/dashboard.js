@@ -36,6 +36,14 @@ const check = (name, ok, extra) => { if (!ok) fails++; log((ok ? 'PASS ' : 'FAIL
   await A.waitForFunction(() => /polling/.test(document.getElementById('live-txt').textContent));
   check('live indicator says polling', true);
 
+  // ---- the demo path: a #token= fragment signs in at once and is scrubbed from the URL
+  const ctxD = await mk(); const D = await page(ctxD);
+  await D.goto(B + '/#token=alice-token-0123456789');
+  await D.waitForSelector('#repo-meta .rolechip');
+  check('#token= fragment signs in without a prompt', await D.locator('.signin').count() === 0);
+  check('token is scrubbed from the address bar', !/token/.test(D.url()), D.url());
+  await ctxD.close();
+
   // ---- locks view
   await A.click('nav.rail a[data-view=locks]');
   await A.waitForSelector('#lk-out table');
@@ -78,7 +86,7 @@ const check = (name, ok, extra) => { if (!ok) fails++; log((ok ? 'PASS ' : 'FAIL
   await A.locator('#rl-out tr', { hasText: 'R1' }).first().locator('button', { hasText: 'Verify' }).click();
   await A.waitForSelector('#rl-detail .statuschip');
   check('verify reports authenticated: bot', /authenticated: bot/i.test(await txt(A, '#rl-detail')));
-  await A.fill('#rl-key', 'bot');
+  await A.selectOption('#rl-key', 'bot');
   await A.locator('#rl-out tr', { hasText: 'R2' }).first().locator('button', { hasText: 'Sign' }).click();
   await A.waitForFunction(() => document.querySelectorAll('#rl-out tbody tr').length && ![...document.querySelectorAll('#rl-out tbody tr')].some(r => /unsigned/i.test(r.innerText)), null, { timeout: 15000 }).catch(() => {});
   const rl2 = await txt(A, '#rl-out');

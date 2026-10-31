@@ -208,3 +208,13 @@ def test_security_headers_on_every_kind_of_response(client):
         assert h["x-content-type-options"] == "nosniff", path
         assert h["x-frame-options"] == "DENY", path
     assert "http" not in client.get("/").headers["content-security-policy"]
+
+
+def test_dashboard_empty_states_are_illustrated_but_still_explain(client):
+    """Each empty state draws the missing thing, hides the picture from assistive technology, and
+    keeps the explanation (and the command to run) in text."""
+    js = client.get("/static/app.js").text
+    assert "function emptyArt(" in js and '"aria-hidden": "true"' in js
+    for kind in ("release", "review", "agent", "rack"):
+        assert f'emptyArt("{kind}"' in js, kind
+    assert "vcm release create" in js and "vcm pr open" in js

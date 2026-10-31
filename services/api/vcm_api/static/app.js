@@ -280,6 +280,23 @@
   const loading = (what) => h("p", { class: "loading" }, what || "Loading");
   const empty = (txt) => h("p", { class: "empty" }, txt);
 
+  /* Line-art for empty states: a picture of the thing that is missing, then what to do about it.
+     Decorative, so hidden from assistive technology; the text carries the meaning. */
+  const ART = {
+    release: ["M20 24l40-18 40 18v34l-40 18-40-18z", "M20 24l40 18 40-18M60 42v34", "M40 15l40 18"],
+    review: ["M30 14v52", "M30 30h38a14 14 0 0114 14v6", "M30 66h38", "M30 14m-6 0a6 6 0 1012 0 6 6 0 10-12 0",
+      "M30 66m-6 0a6 6 0 1012 0 6 6 0 10-12 0", "M82 50m-6 0a6 6 0 1012 0 6 6 0 10-12 0"],
+    agent: ["M26 8h46l18 18v46H26z", "M72 8v18h18", "M38 38h38M38 50h38M38 62h22", "M84 66m-12 0a12 12 0 1024 0 12 12 0 10-24 0",
+      "M78 66l5 5 9-10"],
+    rack: ["M28 6h64v20H28zM28 30h64v20H28zM28 54h64v20H28z", "M36 16h.01M36 40h.01M36 64h.01",
+      "M48 16h28M48 40h28M48 64h28", "M22 78h76"],
+  };
+  function emptyArt(kind, txt) {
+    const svg = s("svg", { class: "emptyart-svg", viewBox: "0 0 120 80", "aria-hidden": "true" },
+      (ART[kind] || []).map((d) => s("path", { d: d, pathLength: 1 })));
+    return h("div", { class: "emptyart" }, svg, h("p", { class: "empty" }, txt));
+  }
+
   function table(headers, rows) {
     return h("div", { class: "scroll" },
       h("table", { class: "data" },
@@ -732,7 +749,7 @@
   function fleetPanel(ref, fleet) {
     if (!fleet.length) {
       return panel("Built units carrying " + ref, { count: 0 },
-        empty("No registered unit carries " + ref + " yet. Register one against a release with " +
+        emptyArt("rack", "No registered unit carries " + ref + " yet. Register one against a release with " +
           "`vcm device register SERIAL --release NAME`, then trace again."));
     }
     const groups = new Map();
@@ -909,7 +926,7 @@
       const units = {};
       S.devices.forEach((d) => { units[d.release] = (units[d.release] || 0) + 1; });
       clear(out).append(panel("Releases", { count: rels.length, flush: !!rels.length },
-        !rels.length ? empty("No releases yet. Pin a revision with " +
+        !rels.length ? emptyArt("release", "No releases yet. Pin a revision with " +
           "`vcm release create NAME --rev REV`, and it will appear here to verify and roll back.") :
         table(["Name", "Revision", "Created", "Validation", "manifest sha256", "Units", ""],
           rels.map((r) => h("tr", {},
@@ -1085,10 +1102,10 @@
         panel("Proposals", { count: shown.length, extra: S.ui.agFilter },
           shown.length
             ? h("div", {}, shown.map(proposalCard))
-            : empty(all.length
-                ? "Nothing with that status."
-                : "No proposals yet. When an agent connected over MCP asks for a change, it " +
-                  "appears here with its reason, for a person to decide.")),
+            : all.length
+              ? empty("Nothing with that status.")
+              : emptyArt("agent", "No proposals yet. When an agent connected over MCP asks for a " +
+                  "change, it appears here with its reason, for a person to decide.")),
         panel("Connect an agent", {},
           h("p", { class: "empty", style: "margin:0 0 10px" },
             "VCM serves an MCP server over stdio. It is offline, needs no API key and opens no " +
@@ -1178,7 +1195,7 @@
                 h("td", { class: "num" }, p.approvals),
                 h("td", {}, h("button", { class: "ghost", type: "button",
                   onclick: () => showPr(p.id) }, "Open")))))
-          : empty("No pull requests yet. Open one with " +
+          : emptyArt("review", "No pull requests yet. Open one with " +
             "`vcm pr open --base REV --head REV --title TEXT`; a person then approves it here.")),
         h("div", { id: "pr-detail" }));
       if (S.review.selected) showPr(S.review.selected);
@@ -1434,7 +1451,7 @@
       const p = await api("/api/fleet/power?" + q);
       fleetSummary(p);
       if (!p.racks.length) {
-        clear(ui.powerOut).append(empty("No racks yet. Define one with `vcm fleet rack define " +
+        clear(ui.powerOut).append(emptyArt("rack", "No racks yet. Define one with `vcm fleet rack define " +
           "NAME --budget W` and place units with `vcm fleet place`, or import placement " +
           "from NetBox with `vcm fleet netbox`."));
         return;

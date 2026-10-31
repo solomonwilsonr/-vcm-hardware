@@ -136,7 +136,7 @@
   /* --------------------------------------------------------------- replay */
 
   var targets = [].slice.call(document.querySelectorAll(
-    "[data-reveal], [data-steps], [data-flow], .term, .blast, .sync, .meter, .ring-svg, [data-count]"));
+    "[data-reveal], [data-steps], [data-flow], .art, .term, .blast, .sync, .meter, .ring-svg, [data-count]"));
 
   function play(el) {
     if (el.classList.contains("in")) return;

@@ -60,11 +60,12 @@ every unit whose change still has critical findings.
 | 9 | Impact analysis | `services/ai-engine` | **Implemented** as a deterministic rule engine over a component catalog. Node rules: power budget under redundancy policy, chassis cooling, PCIe generation and lanes, driver/CUDA/BIOS/BMC minimums, power connector, DDR generation, DIMM mixing and channel population, socket fit and mixed CPUs, mixed accelerators on one fabric, NIC vs fabric speed, slot count, and measured draw from attached observations. LLM provider interface exists with a no-op default; no real LLM provider ships |
 | 10 | Rule plugins for site-specific checks | `services/ai-engine` (`vcm_ai.plugins`) | **Implemented**. Plugins cannot emit `verified` findings; a crashing plugin becomes a finding |
 | 11 | Component catalog | `services/ai-engine` | **Implemented**: 90 parts across layers, user and project overrides, JSON/CSV import, per-field source attribution, review worksheets ranked by what your units use, and a trust figure on every report. **No bundled part is reviewed** |
+| 11b | Semantic part search | `services/ai-engine` (`vcm_ai.semantic`) | **Implemented** on **Appwrite VectorsDB**: the catalog is embedded and searched by meaning, then every candidate is checked against catalog facts and labelled `drop_in`/`check`/`incompatible`. Tested offline against a fake embedding and vector service; **not run against a live VectorsDB** |
 | 12 | Validation | `services/validation` | **Implemented**: built-in checks plus an optional `kicad-cli` wrapper for the board domain (skipped when absent) |
 | 13 | Release manifests, verification, rollback planner | `packages/workflow` | **Implemented** (JSON/YAML manifest, re-hash verification, signatures, policy record) |
 | 14 | Policies as code (`vcm-policy.json`) gating checks, reviews, releases and verification | `packages/workflow` (`vcm_workflow.policy`) | **Implemented** |
-| 15 | Physical traceability: unit registry, signed passports, QR | `services/traceability` | **Implemented** with a local JSON registry and a pure-Python QR encoder |
-| 16 | Fleet: racks, placement, queries, recalls, rack power, rollout waves, NetBox import | `services/traceability` (`vcm_trace.fleet`, `vcm_trace.netbox`) | **Implemented**. NetBox import tested against saved API JSON, **not against a live NetBox** |
+| 15 | Physical traceability: unit registry, signed passports, QR | `services/traceability` | **Implemented**. The unit registry is **Appwrite TablesDB** when configured, so one fleet is shared by every machine; local JSON is the offline cache. Pure-Python QR encoder |
+| 16 | Fleet: racks, placement, queries, recalls, rack power, rollout waves, NetBox import | `services/traceability` (`vcm_trace.fleet`, `vcm_trace.fleet_store`, `vcm_trace.netbox`) | **Implemented**. Racks and placement share the fleet store; writes fail closed, reads fall back to the cache and say so. NetBox import tested against saved API JSON, **not against a live NetBox** |
 | 17 | Change review records | `packages/workflow` | **Partial**: diff, impact, validation, comments, approvals, policy-aware readiness, identity via API tokens. No merge action |
 | 18 | Time machine (`timeline`, `explain`) | `packages/workflow` | **Implemented** |
 | 19 | CLI, REST API, dashboard | `packages/vcm-cli`, `services/api` | **Implemented**. The API requires a token (roles: viewer, editor, approver, admin) and refuses to start without one unless `--insecure` |
@@ -74,8 +75,9 @@ every unit whose change still has critical findings.
 
 ## Quickstart
 
-Requires Python 3.11+. The core has no third-party dependencies; the API needs FastAPI, the shared
-graph backend needs the Appwrite SDK.
+Requires Python 3.11+. The core has no third-party dependencies; the API needs FastAPI, and the
+shared fleet, semantic part search and shared graph need the Appwrite SDK (`pip install -e
+'.[appwrite]'`). Without Appwrite credentials everything runs against the checkout.
 
 ```bash
 python3 -m venv .venv && . .venv/bin/activate
@@ -280,24 +282,124 @@ and impact engine serve both. Domains shared by every component (a PSU bank, or 
 are deliberately **not** followed when computing blast radius — otherwise every change would report
 the whole node as affected.
 
-## Shared fleet graph on Appwrite TablesDB
+## What lives in Appwrite, and why
 
-A single engineer's history belongs on their disk. A **fleet** does not: "which of our nodes are
-affected by this driver change?" is a question about every node, so the graph has a second backend
-that puts the same two tables in Appwrite TablesDB.
+VCM stores two very different kinds of thing, and they belong in different places.
+
+**Derived data belongs on your disk.** The object store, snapshots and the dependency graph can all
+be rebuilt from the design files in front of you. Nothing is lost by keeping them local, so the
+graph's default backend is SQLite.
+
+**Facts about physical hardware do not.** A unit is a machine that was built and shipped. It is
+registered by whoever is standing in front of it and asked about later by someone else entirely —
+an operator planning a rollout, a technician scanning the QR sticker on a front panel, an engineer
+running a recall after a bad batch of accelerators. Those are different people on different
+machines reasoning about the same hardware.
+
+So the **unit and rack registry is the fleet of record, and it lives in Appwrite TablesDB.** The
+local JSON files are a cache. This is not a swappable backend; it is the only arrangement in which
+the registry is correct. With a per-clone registry, two engineers who clone the repository have two
+different fleets, and this —
+
+```bash
+vcm device affected --component GPU0 --value "NVIDIA A100 PCIe 40GB"
+```
+
+— silently answers about whichever subset of the fleet that laptop happens to know about. A recall
+query is the single question VCM must never get half-right.
 
 ```bash
 cp .env.example .env     # endpoint, project, API key
-vcm graph health         # check the connection
-vcm graph provision      # create the database, tables, columns and indexes
+vcm fleet health         # is the fleet of record reachable, and how big is it?
+vcm fleet provision      # create the fleet tables, columns and indexes
+vcm device register NODE-0001 --release R1
+vcm fleet recall --model "A100"      # every unit, registered from any machine
+```
+
+Two behaviours differ on purpose, because the failure modes are not symmetric:
+
+- **Writes fail closed.** If the fleet of record is unreachable, registering a unit raises and
+  nothing is written locally either. A unit recorded only on the laptop that registered it is
+  exactly the bug this fixes, so a loud failure beats a half-written registration.
+- **Reads degrade open.** Reads fall back to the local mirror when the service is unreachable, but
+  the store remembers that it did, and every command that reports to a human prints
+  `fleet: LOCAL CACHE, possibly stale`. Stale answers are useful offline; silently stale ones are
+  not.
+
+One consequence is worth stating plainly: the registry is shared, but design history is not. A
+clone can meet a unit built from a revision it has never fetched, and VCM reports that unit by
+serial rather than dropping it or failing the query:
+
+```
+DEMO-B1   rack -   release R1   GPU0=NVIDIA A100 PCIe 40GB, ... (+4)
+1 unit(s), 8 component(s); by rack: (unplaced) 1
+  UNRESOLVED DEMO-A1: revision 9d9e3545fd is not in this checkout (fetch it before closing the incident)
+fleet: shared (Appwrite TablesDB)
+```
+
+An incident cannot be closed on a silently partial fleet, which is the whole reason the registry
+moved out of the checkout.
+
+Without credentials, everything above keeps the old on-disk behaviour with no flags, which is how
+the test suite runs. `VCM_FLEET_LOCAL=1` forces it. Repository-scoped records — releases, pull
+requests, agent proposals — stay in the checkout, because they travel with the files they describe.
+
+### Semantic part search on VectorsDB
+
+The catalog matches by part-number prefix, which answers *what is this part* and nothing else. When
+a part goes end of life the question is the other one — *what could I put here instead* — and
+"a dual-slot 300 W accelerator I can run on an existing 8-pin harness" names no part at all.
+
+So the catalog is embedded into **Appwrite VectorsDB** and searched by meaning:
+
+```bash
+vcm catalog provision                       # vector collection, dimension probed from the model
+vcm catalog index                           # embed all 90 parts
+vcm catalog similar "dual-slot 300 W accelerator on an 8-pin harness"
+vcm catalog replace "NVIDIA A100 PCIe 40GB"
+```
+
+A nearest-neighbour hit is a *plausible* candidate, and plausible is not the standard the rest of
+VCM reports at. So `replace` runs every candidate back through the deterministic catalog facts —
+type, socket, connector, slot width, PCIe generation, driver floor — and labels it:
+
+```
+Replacements for NVIDIA A100 PCIe 40GB (gpu):
+  CHECK         NVIDIA H100 NVL  (unreviewed)
+                needs a 12VHPWR connector, installed part uses 8-pin EPS
+                draws 400 W against 250 W
+                requires driver 525.60.13 (installed part needs only 450.80.02)
+  INCOMPATIBLE  NVIDIA H100 SXM5  (unreviewed)
+                different socket (PCIe vs SXM5)
+```
+
+Semantic search proposes; the rule data disposes. The same discipline as the rest of the engine:
+nothing is reported as more certain than it is.
+
+### The shared dependency graph
+
+The graph has an Appwrite backend too, for teams that want impact analysis queryable fleet-wide
+rather than rebuilt per machine. Unlike the registry this one is genuinely optional — the data is
+derived, so SQLite loses nothing but shareability.
+
+```bash
+vcm graph provision
 vcm graph push --rev v1.1
 vcm graph query --component GPU0 --rev v1.1 --backend appwrite
 ```
 
-Design files stay local; only the graph is shared. Row ids are deterministic hashes, so a re-push
-upserts rather than duplicating; writes are batched into bulk upserts; and a revision's subgraph is
-paged into memory once for traversal, or queried live with `prefetch=False`. The test suite asserts
-that an Appwrite-backed graph returns **byte-identical** results to the local SQLite one.
+Row ids are deterministic hashes, so a re-push upserts rather than duplicating; writes are batched
+into bulk upserts; and a revision's subgraph is paged into memory once for traversal, or queried
+live with `prefetch=False`. The test suite asserts that an Appwrite-backed graph returns
+**byte-identical** results to the local SQLite one.
+
+> **What has actually been run.** Every Appwrite path is exercised against a faithful in-process
+> fake (`tests/fake_appwrite.py`) under both SDK response shapes, because the suite must pass
+> without network. Beyond that: the **fleet store has been run against a live Appwrite project** —
+> provisioned, and verified with two separate clones registering units into one fleet, including
+> the cross-clone duplicate rejection and the stale-cache path. The **VectorsDB path has not been
+> run live**: it needs the `embeddings.write` and `vectors.*` scopes on the API key, and the
+> commands say so when they are missing.
 
 ## Confidence classes
 
@@ -392,6 +494,15 @@ verified. It is a floor, not a census: a rule may use inputs it does not cite in
   sample KiCad files are hand-generated and have not been opened in KiCad.
 - Remotes are a shared directory: no network transport, no server-side access control beyond the
   file system's. History is fast-forward only, by design; there is no merge.
+- The shared fleet makes the **registry** fleet-wide, not the design history. A clone that has not
+  fetched a unit's revision cannot describe that unit, and says so (`UNRESOLVED`) rather than
+  omitting it. Pair it with `vcm remote` so engineers share history too.
+- Row-level Appwrite permissions are **not** used yet: VCM talks to TablesDB with a server API key,
+  which bypasses them. Access control is at the VCM API's token roles, so anyone holding the
+  Appwrite key has full access to the fleet tables. Protect the key accordingly.
+- Semantic part search depends on Appwrite's embedding models, and its shortlist is only as good as
+  the catalog text behind it. Every candidate is checked against catalog facts before it is shown,
+  but an unreviewed catalog entry can make a confident-looking verdict wrong.
 - Signatures prove which trusted key vouched for a release or passport. The trust database is a
   committed file, so whoever can change and commit it decides whom to trust; protect it like code.
   The Ed25519 implementation is pure Python and **not constant-time**: fine for signing manifests

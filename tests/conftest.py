@@ -20,6 +20,18 @@ def _copy_tree(src: Path, dst: Path) -> None:
             shutil.copy2(p, dst / p.relative_to(src))
 
 
+@pytest.fixture(autouse=True)
+def local_fleet(monkeypatch):
+    """Keep every test on the local fleet store.
+
+    ``AppwriteConfig`` finds a developer's real ``.env`` by walking up from the working directory,
+    so without this a test run on a configured machine would reach a live Appwrite project — and
+    the suite is required to pass offline. Tests that exercise the shared store attach it
+    explicitly, with a fake service.
+    """
+    monkeypatch.setenv("VCM_FLEET_LOCAL", "1")
+
+
 @pytest.fixture
 def repo(tmp_path):
     return Repository.init(tmp_path / "work")

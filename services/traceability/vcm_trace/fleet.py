@@ -50,7 +50,7 @@ def place_device(repo: Repository, serial: str, rack: str, position: int | None 
     """Record where a unit is installed. Placement is not covered by passport signatures, since
     moving a unit does not change what it is."""
     dev = repo.load_record("devices", serial)
-    if not (repo.dir / RACK_KIND / f"{rack}.json").is_file():
+    if not repo.has_record(RACK_KIND, rack):
         define_rack(repo, rack)
     dev["location"] = {"rack": rack, "position": position}
     repo.save_record("devices", serial, dev)
@@ -59,6 +59,15 @@ def place_device(repo: Repository, serial: str, rack: str, position: int | None 
 
 
 # ---- per-revision facts, cached ------------------------------------------------------
+class RevisionUnavailable(VcmError):
+    """A unit was built from a revision this checkout does not have.
+
+    Expected, not exceptional, once the fleet is shared: the registry spans every machine while
+    design history is per-repository, so a clone can legitimately meet a unit whose revision it has
+    never fetched. Callers report those units rather than failing the whole query.
+    """
+
+
 class _Facts:
     """Design, declared draw and firmware per revision; every unit on a revision shares them."""
 
@@ -67,11 +76,20 @@ class _Facts:
         self.catalog = Catalog.load(project_dir=repo.root)
         self._design: dict[str, object] = {}
         self._draw: dict[str, float | None] = {}
+        #: serial -> revision, for units this checkout could not describe
+        self.unresolved: dict[str, str] = {}
 
     def design(self, rev: str):
         if rev not in self._design:
-            self._design[rev] = design_from_revision(self.repo, rev)
+            try:
+                self._design[rev] = design_from_revision(self.repo, rev)
+            except VcmError as exc:
+                raise RevisionUnavailable(
+                    f"revision {rev[:10]} is not in this checkout: {exc}") from exc
         return self._design[rev]
+
+    def note_missing(self, serial: str, rev: str) -> None:
+        self.unresolved[serial] = rev
 
     def meta(self, rev: str) -> dict:
         return node_meta(self.design(rev))
@@ -134,30 +152,47 @@ def fleet_query(repo: Repository, type_: str | None = None, model: str | None = 
         if release and dev["release"] != release:
             continue
         rev = dev["revision"]
-        if filters and not _firmware_ok(facts.meta(rev), filters):
-            continue
-        comps = []
-        if type_ or model or mpn:
-            for ref, c in sorted(facts.design(rev).components.items()):
-                if type_ and (c.lib_id or "").lower() != type_.lower():
-                    continue
-                if model and model.lower() not in c.value.lower():
-                    continue
-                if mpn and mpn.lower() not in (c.mpn or "").lower():
-                    continue
-                comps.append({"ref": ref, "model": c.value, "mpn": c.mpn})
-            if not comps:
+        try:
+            if filters and not _firmware_ok(facts.meta(rev), filters):
                 continue
+            comps = _matching_components(facts, rev, type_, model, mpn)
+            firmware = facts.meta(rev).get("firmware") or {}
+        except RevisionUnavailable:
+            facts.note_missing(dev["serial"], rev)
+            continue
+        if (type_ or model or mpn) and not comps:
+            continue
         out.append({"serial": dev["serial"], "release": dev["release"], "revision": rev,
                     "batch": dev.get("batch", ""), "rack": loc.get("rack"),
                     "position": loc.get("position"),
-                    "firmware": facts.meta(rev).get("firmware") or {}, "components": comps})
+                    "firmware": firmware, "components": comps})
     return out
 
 
+def _matching_components(facts: _Facts, rev: str, type_, model, mpn) -> list[dict]:
+    """Components of ``rev`` matching the given filters, in reference order."""
+    comps: list[dict] = []
+    if type_ or model or mpn:
+        for ref, c in sorted(facts.design(rev).components.items()):
+            if type_ and (c.lib_id or "").lower() != type_.lower():
+                continue
+            if model and model.lower() not in c.value.lower():
+                continue
+            if mpn and mpn.lower() not in (c.mpn or "").lower():
+                continue
+            comps.append({"ref": ref, "model": c.value, "mpn": c.mpn})
+    return comps
+
+
 def recall(repo: Repository, **criteria) -> dict:
-    """Everything an incident needs in one place: affected units grouped by rack and release."""
-    units = fleet_query(repo, **criteria)
+    """Everything an incident needs in one place: affected units grouped by rack and release.
+
+    ``unresolved`` lists units whose revision this checkout does not hold. They are **not** a clean
+    result: an incident cannot be closed on a partial fleet, so they are reported by serial rather
+    than quietly dropped.
+    """
+    facts = _Facts(repo)
+    units = fleet_query(repo, facts=facts, **criteria)
     by_rack: dict[str, list[str]] = {}
     by_release: dict[str, list[str]] = {}
     for u in units:
@@ -165,7 +200,9 @@ def recall(repo: Repository, **criteria) -> dict:
         by_release.setdefault(u["release"], []).append(u["serial"])
     return {"criteria": {k: v for k, v in criteria.items() if v}, "units": units,
             "count": len(units), "components": sum(len(u["components"]) for u in units),
-            "by_rack": by_rack, "by_release": by_release, "generated_at": now_iso()}
+            "by_rack": by_rack, "by_release": by_release,
+            "unresolved": [{"serial": k, "revision": v} for k, v in sorted(facts.unresolved.items())],
+            "generated_at": now_iso()}
 
 
 # ---- rack power ----------------------------------------------------------------------
@@ -185,9 +222,15 @@ def rack_power(repo: Repository, upgrade_to: str | None = None, only_release: st
             continue
         row = rows.setdefault(name, {"rack": name, "units": [], "now_w": 0.0, "after_w": 0.0,
                                      "unknown": []})
-        now = facts.draw(dev["revision"])
-        moves = target and (only_release is None or dev["release"] == only_release)
-        after = facts.draw(target) if moves else now
+        try:
+            now = facts.draw(dev["revision"])
+            moves = target and (only_release is None or dev["release"] == only_release)
+            after = facts.draw(target) if moves else now
+        except RevisionUnavailable:
+            facts.note_missing(dev["serial"], dev["revision"])
+            row["units"].append(dev["serial"])
+            row["unknown"].append(dev["serial"])
+            continue
         row["units"].append(dev["serial"])
         if now is None or after is None:
             row["unknown"].append(dev["serial"])

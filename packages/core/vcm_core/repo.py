@@ -11,6 +11,7 @@ from .audit import AuditLog
 from .categories import categorize
 from .model import Artifact, Revision, canonical_json
 from .objects import ObjectStore
+from .records import FileRecordStore, RecordError, RecordStore
 
 VCM_DIR = ".vcm"
 ALWAYS_IGNORED = {VCM_DIR, ".git", "__pycache__", ".DS_Store"}
@@ -29,13 +30,16 @@ def now_iso() -> str:
 
 
 class Repository:
-    def __init__(self, root: str | Path):
+    def __init__(self, root: str | Path, records: RecordStore | None = None):
         self.root = Path(root).resolve()
         self.dir = self.root / VCM_DIR
         if not self.dir.is_dir():
             raise VcmError(f"not a vcm repository: {self.root}")
         self.store = ObjectStore(self.dir / "objects")
         self.audit = AuditLog(self.dir)
+        #: where named JSON records live. Defaults to this checkout; ``vcm_trace.fleet_store``
+        #: swaps in the shared Appwrite store when the fleet is configured.
+        self.records: RecordStore = records or FileRecordStore(self.dir)
 
     # ---- lifecycle -------------------------------------------------
     @classmethod
@@ -294,23 +298,37 @@ class Repository:
         return {**data, "_evidence": hist[-1]}
 
     # ---- named JSON records (releases, devices, pull requests) -----
+    # Delegated to :class:`~vcm_core.records.RecordStore` so that the fleet kinds (devices, racks)
+    # can live in a shared database while repository-scoped kinds stay on disk. See
+    # ``vcm_core.records`` for why those two are different.
     def _record_path(self, kind: str, name: str) -> Path:
-        if not name or name.startswith(".") or any(c in name for c in "/\\\0"):
-            raise VcmError(f"invalid {kind[:-1]} name: {name!r}")
-        return self.dir / kind / f"{name}.json"
+        """Local path for a record. Still the real location for a file store, and the mirror
+        location for a shared one."""
+        try:
+            return FileRecordStore(self.dir).path(kind, name)
+        except RecordError as exc:
+            raise VcmError(str(exc)) from exc
 
     def save_record(self, kind: str, name: str, data: dict) -> Path:
-        p = self._record_path(kind, name)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
-        return p
+        try:
+            return self.records.save(kind, name, data)
+        except RecordError as exc:
+            raise VcmError(str(exc)) from exc
 
     def load_record(self, kind: str, name: str) -> dict:
-        p = self._record_path(kind, name)
-        if not p.is_file():
+        try:
+            rec = self.records.load(kind, name)
+        except RecordError as exc:
+            raise VcmError(str(exc)) from exc
+        if rec is None:
             raise VcmError(f"no such {kind[:-1]}: {name}")
-        return json.loads(p.read_text())
+        return rec
 
     def list_records(self, kind: str) -> list[dict]:
-        base = self.dir / kind
-        return [json.loads(p.read_text()) for p in sorted(base.glob("*.json"))] if base.is_dir() else []
+        return self.records.list(kind)
+
+    def has_record(self, kind: str, name: str) -> bool:
+        try:
+            return self.records.has(kind, name)
+        except RecordError as exc:
+            raise VcmError(str(exc)) from exc

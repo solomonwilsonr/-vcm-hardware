@@ -26,6 +26,7 @@ from vcm_core import signing as sg
 from vcm_core.tokens import ROLES, TokenStore
 from vcm_diff import compare_drift, diff_revisions, render_text
 from vcm_graph import build_graph, project_config
+from vcm_graph.backends.appwrite_backend import AppwriteConfigError
 from vcm_graph.backends.appwrite_backend import health as appwrite_health
 from vcm_graph.backends.appwrite_backend import provision as appwrite_provision
 from vcm_mcp import approve as approve_proposal
@@ -57,6 +58,9 @@ from vcm_trace import (
     register_device,
     sign_device,
 )
+from vcm_trace.fleet_store import health as fleet_health
+from vcm_trace.fleet_store import open_record_store
+from vcm_trace.fleet_store import provision as fleet_provision
 from vcm_validation import check_bom_text, compare_validation, validate_revision
 from vcm_workflow import (
     add_comment,
@@ -85,7 +89,27 @@ def _dump(obj) -> None:
 
 
 def _repo(args) -> Repository:
-    return Repository.discover(args.repo or ".")
+    """The repository, with the shared fleet attached when Appwrite is configured.
+
+    Units and racks describe hardware that outlives the checkout, so they live in the fleet of
+    record rather than in ``.vcm``. Without credentials this is exactly the old local behaviour.
+    See ``vcm_trace.fleet_store``.
+    """
+    repo = Repository.discover(args.repo or ".")
+    store = open_record_store(repo.dir)
+    if store.name != repo.records.name:
+        repo.records = store
+    return repo
+
+
+def _fleet_note(repo: Repository) -> str:
+    """One line naming which fleet answered, and whether it was stale."""
+    store = repo.records
+    if store.name == "local":
+        return "fleet: this checkout only (set VCM_APPWRITE_* to share it)"
+    if getattr(store, "degraded", None):
+        return f"fleet: LOCAL CACHE, possibly stale - {store.degraded}"
+    return "fleet: shared (Appwrite TablesDB)"
 
 
 def _pair(args) -> tuple[str, str]:
@@ -541,8 +565,19 @@ def _units_csv(units: list[dict]) -> str:
 
 
 def cmd_fleet(args) -> int:
-    repo = _repo(args)
     c = args.fleet_cmd
+    if c == "provision":
+        done = fleet_provision()
+        _dump(done) if args.json else print(
+            f"Fleet schema ready: {len(done['created'])} created, "
+            f"{len(done['existed'])} already present")
+        return 0
+    if c == "health":
+        report = fleet_health()
+        _dump(report)
+        return 0 if report["ok"] else 1
+
+    repo = _repo(args)
     if c == "rack":
         if args.rack_cmd == "define":
             r = define_rack(repo, args.name, args.budget, args.cooling, args.site, args.units)
@@ -574,8 +609,12 @@ def cmd_fleet(args) -> int:
             if c == "recall":
                 print(f"{res['count']} unit(s), {res['components']} component(s); by rack: "
                       + ", ".join(f"{k} {len(v)}" for k, v in sorted(res["by_rack"].items())))
+                for u in res.get("unresolved", []):
+                    print(f"  UNRESOLVED {u['serial']}: revision {u['revision'][:10]} is not in "
+                          "this checkout (fetch it before closing the incident)")
             else:
                 print(f"{len(units)} unit(s)")
+            print(_fleet_note(repo))
         return 0
     if c == "power":
         res = rack_power(repo, args.upgrade_to, args.release)
@@ -858,6 +897,45 @@ def cmd_timeline(args) -> int:
 def cmd_explain(args) -> int:
     ex = explain(_repo(args), args.a, args.b)
     _dump(ex) if args.json else print(ex["text"])
+    return 0
+
+
+def cmd_semantic(args) -> int:
+    """Semantic part search, which needs Appwrite VectorsDB rather than the local catalog alone."""
+    from vcm_ai.semantic import SemanticCatalog, replacements_for
+    sem = SemanticCatalog()
+    if args.semantic_cmd == "provision":
+        done = sem.provision()
+        _dump(done) if args.json else print(
+            f"Vector collection ready ({done['model']}, {done['dimension']} dimensions): "
+            f"{len(done['created'])} created, {len(done['existed'])} already present")
+        return 0
+    catalog = Catalog.load(project_dir=Path.cwd())
+    if args.semantic_cmd == "index":
+        res = sem.index(catalog)
+        _dump(res) if args.json else print(
+            f"Indexed {res['indexed']} parts ({res['model']}, {res['dimension']} dimensions)")
+        return 0
+    if args.semantic_cmd == "similar":
+        hits = sem.similar(args.text, limit=args.limit, type_=args.type)
+        if args.json:
+            _dump(hits)
+        else:
+            for h in hits:
+                flag = "" if h.get("reviewed") else "  (unreviewed)"
+                print(f"{h['mpn']:28} {h.get('type', ''):10}{flag}\n    {h.get('text', '')}")
+        return 0
+    res = replacements_for(sem, mpn=args.mpn, value=args.value or "", catalog=catalog,
+                           limit=args.limit)
+    if args.json:
+        _dump(res)
+        return 0
+    print(f"Replacements for {res['installed']} ({res['type']}):")
+    for c in res["candidates"]:
+        print(f"  {c['verdict'].upper():13} {c['mpn']}" + ("" if c["reviewed"] else "  (unreviewed)"))
+        for reason in c["blockers"] + c["checks"]:
+            print(f"                {reason}")
+    print(res["caveat"])
     return 0
 
 
@@ -1324,6 +1402,11 @@ def build_parser() -> argparse.ArgumentParser:
         s.add_argument("--release")
         s.add_argument("--json", action="store_true")
         s.add_argument("--csv", action="store_true")
+    s = fl.add_parser("provision", help="create the Appwrite fleet tables and indexes")
+    s.set_defaults(fn=cmd_fleet)
+    s.add_argument("--json", action="store_true")
+    s = fl.add_parser("health", help="check the shared fleet of record")
+    s.set_defaults(fn=cmd_fleet)
     s = fl.add_parser("power", help="declared draw per rack, now and after an upgrade")
     s.set_defaults(fn=cmd_fleet)
     s.add_argument("--upgrade-to", metavar="REV")
@@ -1448,6 +1531,24 @@ def build_parser() -> argparse.ArgumentParser:
     s = c.add_parser("show", help="catalog entry for one part number")
     s.set_defaults(fn=cmd_catalog)
     s.add_argument("mpn")
+    s = c.add_parser("provision", help="create the Appwrite vector collection for part search")
+    s.set_defaults(fn=cmd_semantic, semantic_cmd="provision")
+    s.add_argument("--json", action="store_true")
+    s = c.add_parser("index", help="embed the catalog into Appwrite VectorsDB")
+    s.set_defaults(fn=cmd_semantic, semantic_cmd="index")
+    s.add_argument("--json", action="store_true")
+    s = c.add_parser("similar", help="find parts by meaning, not part number")
+    s.set_defaults(fn=cmd_semantic, semantic_cmd="similar")
+    s.add_argument("text", help='e.g. "dual-slot 300 W accelerator on an 8-pin harness"')
+    s.add_argument("--type", help="restrict to a part type, e.g. gpu, dimm, nic")
+    s.add_argument("--limit", type=int, default=5)
+    s.add_argument("--json", action="store_true")
+    s = c.add_parser("replace", help="shortlist replacements for a part, each checked for fit")
+    s.set_defaults(fn=cmd_semantic, semantic_cmd="replace")
+    s.add_argument("mpn")
+    s.add_argument("--value", help="match on component value instead of part number")
+    s.add_argument("--limit", type=int, default=5)
+    s.add_argument("--json", action="store_true")
     s = c.add_parser("coverage", help="which components of a revision the catalog can reason about")
     s.set_defaults(fn=cmd_catalog)
     s.add_argument("--rev", default="HEAD")
@@ -1515,7 +1616,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.fn(args)
-    except (VcmError, KeyError) as e:
+    except (VcmError, AppwriteConfigError, KeyError) as e:
+        # AppwriteConfigError carries the remedy (missing credentials or API-key scopes), so it is
+        # a message for the reader, not a stack trace.
         print(f"vcm: error: {e.args[0] if isinstance(e, KeyError) else e}", file=sys.stderr)
         return 1
     except BrokenPipeError:

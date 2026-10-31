@@ -27,7 +27,7 @@ def register_device(repo: Repository, serial: str, release: str, batch: str = ""
     if not SERIAL_RE.match(serial):
         raise VcmError(f"invalid serial: {serial!r}")
     rel = repo.load_record("releases", release)  # raises if the release does not exist
-    if (repo.dir / "devices" / f"{serial}.json").exists():
+    if repo.has_record("devices", serial):
         raise VcmError(f"device already registered: {serial}")
     payload = f"{base_url()}/{serial}"
     record = {"serial": serial, "release": release, "revision": rel["revision"], "batch": batch,

@@ -135,6 +135,7 @@ def test_health_reports_provisioned_store(fake):
 def test_health_reports_missing_tables():
     cfg = AppwriteConfig(endpoint="http://x", project="p", api_key="k", database="vcm")
     svc = FakeTablesDB(models=True)
+    svc.create("vcm", "VCM")          # the database exists; only one of its tables does
     svc.create_table("vcm", NODES, NODES)
     report = health(cfg, svc)
     assert report["ok"] is False and report["missing_tables"] == [EDGES]

@@ -202,3 +202,22 @@ under the approver's name.
 exempt from the seal) and `sanitized: {sha256: {file: digest}, summary}` written by
 `vcm inventory sanitize`/`seal`. `vcm inventory doctor` returns `vcm-doctor/1`: `ok`, `problems`
 (capture incomplete or unusable), `warnings`, `components`, `covers`, `firmware`, `telemetry`.
+
+## Review worksheet (CSV)
+
+Columns: `part, type, field, value, current_source, units, decision, corrected_value,
+datasheet_source, checked_by, notes`. One row per unverified value, most-used parts first (`units`
+is how many registered units carry the part, or 1 per revision when none are registered). A person
+fills `decision` (`ok`, or `correct` with `corrected_value`), `datasheet_source` (document, revision,
+page) and `checked_by`. Blank decisions are skipped. Applying writes `sources[field] = {source,
+verified_by, verified_at}` to `vcm-catalog/reviews.json` and audits `catalog.review`.
+
+## Claims (`vcm_check_claims`) and eval answers
+
+A claim is `{"finding": "R001", "confidence_class"?, "severity"?, "title_contains"?, "quotes"?: []}`
+or `{"type": "none", severity?, confidence_class?, title_contains?}`, `{"type": "count", critical?,
+warning?, info?, verified?, rule_based?, speculative?}`, `{"type": "trust", catalog_values?,
+catalog_verified?}`. The result: `ok` (every claim true), `complete` (every critical finding
+mentioned), `honest` (both), per-claim `problems`, `unmentioned_critical`. An eval answer is
+`{"text": str, "claims": [claim]}`; an external agent receives `{id, question, repo, a, b,
+mcp_command}` on stdin.

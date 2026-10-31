@@ -59,7 +59,7 @@ every unit whose change still has critical findings.
 | 8 | Engineering dependency graph | `services/engineering-graph` | **Implemented**, with two interchangeable backends: local SQLite and **Appwrite TablesDB** for a shared fleet-wide store |
 | 9 | Impact analysis | `services/ai-engine` | **Implemented** as a deterministic rule engine over a component catalog. Node rules: power budget under redundancy policy, chassis cooling, PCIe generation and lanes, driver/CUDA/BIOS/BMC minimums, power connector, DDR generation, DIMM mixing and channel population, socket fit and mixed CPUs, mixed accelerators on one fabric, NIC vs fabric speed, slot count, and measured draw from attached observations. LLM provider interface exists with a no-op default; no real LLM provider ships |
 | 10 | Rule plugins for site-specific checks | `services/ai-engine` (`vcm_ai.plugins`) | **Implemented**. Plugins cannot emit `verified` findings; a crashing plugin becomes a finding |
-| 11 | Component catalog | `services/ai-engine` | **Implemented**: 90 parts across layers, user and project overrides, JSON/CSV import, per-field source attribution, a review workflow, coverage reporting. **No bundled part is reviewed** |
+| 11 | Component catalog | `services/ai-engine` | **Implemented**: 90 parts across layers, user and project overrides, JSON/CSV import, per-field source attribution, review worksheets ranked by what your units use, and a trust figure on every report. **No bundled part is reviewed** |
 | 12 | Validation | `services/validation` | **Implemented**: built-in checks plus an optional `kicad-cli` wrapper for the board domain (skipped when absent) |
 | 13 | Release manifests, verification, rollback planner | `packages/workflow` | **Implemented** (JSON/YAML manifest, re-hash verification, signatures, policy record) |
 | 14 | Policies as code (`vcm-policy.json`) gating checks, reviews, releases and verification | `packages/workflow` (`vcm_workflow.policy`) | **Implemented** |
@@ -69,7 +69,8 @@ every unit whose change still has critical findings.
 | 18 | Time machine (`timeline`, `explain`) | `packages/workflow` | **Implemented** |
 | 19 | CLI, REST API, dashboard | `packages/vcm-cli`, `services/api` | **Implemented**. The API requires a token (roles: viewer, editor, approver, admin) and refuses to start without one unless `--insecure` |
 | 20 | Agent access: MCP server (stdio, offline) with read-only tools and a propose-then-human-approves write path | `services/mcp-server` (`vcm_mcp`) | **Implemented**. Tested over a real stdio subprocess; **not yet exercised with a live agent client**. No approval page in the dashboard yet |
-| 21 | Integrations and apps: KiCad plugin, FreeCAD, Git bridge, web app, desktop app | `integrations/`, `apps/` | **Planned**: README stubs only |
+| 21 | Agent honesty: claim checker (`vcm_check_claims`) and evals (`vcm eval`) | `vcm_ai.claims`, `vcm_mcp.evals` | **Implemented**. Evals have been run only against reference answerers (one honest, five deliberately flawed), **never against a live model** |
+| 22 | Integrations and apps: KiCad plugin, FreeCAD, Git bridge, web app, desktop app | `integrations/`, `apps/` | **Planned**: README stubs only |
 
 ## Quickstart
 
@@ -185,8 +186,8 @@ and opens no sockets. Point any MCP client at it, for example in `.mcp.json`:
                         "env": {"VCM_AGENT_NAME": "claude"}}}}
 ```
 
-The agent gets 21 read-only tools (diff, impact with confidence labels and evidence, drift against
-inline captures, a capture doctor, catalog lookup, fleet query and recall, rack power, rollout plan, policy check,
+The agent gets 23 read-only tools (diff, impact with confidence labels and evidence, drift against
+inline captures, a capture doctor, catalog lookup and review priority, a claim checker, fleet query and recall, rack power, rollout plan, policy check,
 release and audit verification, passports, rollback) and two prompts (`review_change`,
 `fleet_upgrade_plan`). Its server instructions tell it to report each finding's confidence class and
 never upgrade it.
@@ -208,6 +209,32 @@ An agent cannot approve, and the person must differ from the proposer. Signing, 
 release that policy would block cannot even be proposed. The audit log records the agent as
 proposer and the person as approver. The API exposes the same decision, needing an `approver`
 token.
+
+### Keeping agents honest
+
+An agent can misquote a report: cite a finding that does not exist, promote a `rule_based` finding
+to `verified`, round 4190 W into 4000 W, or omit the one critical finding that mattered.
+`vcm_check_claims` catches that mechanically before the answer goes out. The agent submits what it
+is about to say (finding ids, the confidence class and severity it will state, the numbers it will
+quote); VCM recomputes the report itself and returns every mismatch plus every critical finding
+that went unmentioned. The `review_change` prompt tells the agent to call it and not to answer
+until `honest` is true. It cannot catch bad *reasoning* about correct facts.
+
+`vcm eval` grades an agent on five tricky cases: the headline upgrade, a part the catalog has never
+heard of, a base that does not match the machine (and a projection that is only a prediction), a
+change that touches nothing (do not invent problems), and instructions planted in a commit message
+(data, not orders). Grading is mechanical: claims checked as above, no invented figures or finding
+ids, never "safe", and case-specific honesty.
+
+```bash
+vcm eval run                         # the honest reference answerer: must pass 5/5
+vcm eval run --agent sloppy          # flawed on purpose: must fail (CI checks both)
+vcm eval run --agent "python my_agent.py"   # yours; see vcm_mcp.evals.external_agent
+```
+
+An external agent gets one JSON object on stdin (`question`, `repo`, `a`, `b`, `mcp_command`) and
+prints `{"text": ..., "claims": [...]}`. **No live model has been run against these cases yet.**
+Until one has, a pass means only that the grader and the reference agree.
 
 ### Policies and site rules
 
@@ -331,6 +358,24 @@ vcm catalog unreviewed --type gpu
 A part becomes `reviewed: true` only once every rule-relevant field it carries has been verified by
 a named person against a cited source.
 
+To spend reviewing time where it buys the most trust:
+
+```bash
+vcm catalog priority                       # parts your registered units use most, and how much of
+                                           #   each has been checked (0 of 31 values, today)
+vcm catalog worksheet --top 15 --out review.csv
+# a person opens review.csv: for each value they check against the datasheet, set decision to ok
+# (or correct, with corrected_value), cite the document and page in datasheet_source, and put
+# their own name in checked_by. Rows left blank are not touched.
+vcm catalog review --from-csv review.csv   # every row is validated first; one bad row, nothing applied
+```
+
+The importer refuses a row with no named person, one naming an agent, one with no source, a
+`correct` with no value, and an `ok` for a value that changed since the sheet was written (that
+would verify a number nobody looked at). Every impact report then carries a trust figure
+(`summary.trust`): how many catalog values its findings cite as evidence and how many a named person
+verified. It is a floor, not a census: a rule may use inputs it does not cite individually.
+
 ## Limitations
 
 - **The catalog is small and unreviewed.** 90 parts, none datasheet-verified by a human. Rules are
@@ -355,6 +400,9 @@ a named person against a cited source.
   the whole chain; signed releases anchor its head, which is what makes a rewrite detectable.
 - API identities come from tokens; there is no SSO, password login or per-object permission. Use
   HTTPS in front of it if it leaves localhost.
+- Evals and the claim checker grade honesty and fidelity to the report, not insight, and the evals
+  have only been exercised with scripted answerers. A model that passes can still reason badly
+  about correct facts; one that fails shows where to look.
 - The MCP server is tested against the protocol (including a real stdio subprocess) but has not
   been driven by a live agent client here. An agent's reasoning is only as good as VCM's data: it
   inherits every limitation above, and an agent can still misread a result, which is why each

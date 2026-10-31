@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 from vcm_ai import analyze
 from vcm_ai.catalog import Catalog, unverified_fields
+from vcm_ai.claims import check_claims
 from vcm_core import Repository, VcmError
 from vcm_diff import compare_drift, diff_revisions
 from vcm_graph import build_graph
@@ -178,7 +179,10 @@ def compact_impact(rep: dict, severity: str = "info", classes: list[str] | None 
             "how_to_read": "confidence_class is exactly one of verified (fact from data), "
                            "rule_based (engineering heuristic, check the cited values) or "
                            "speculative (a prediction). Never present a rule_based or "
-                           "speculative finding as established."}
+                           "speculative finding as established. summary.trust counts the "
+                           "catalog values findings cite as evidence and how many a named "
+                           "person verified (a floor, not a census): quote it, and say so "
+                           "when it is zero."}
 
 
 @tool("vcm_impact", "Impact report for a change: what else it affects, with every finding "
@@ -194,6 +198,21 @@ def impact_tool(repo, args):
     rep = analyze(repo, args["a"], args["b"])
     return compact_impact(rep, args.get("min_severity", "info"), args.get("classes"),
                           bool(args.get("full")))
+
+
+@tool("vcm_check_claims", "Check what you are about to tell the user against the real report, "
+      "before you say it. VCM recomputes the report itself. Each claim names a finding and "
+      "what you will say about it (its id, confidence_class, severity, and any numbers you "
+      "will quote); it also supports 'none' (there is no such finding), 'count' and 'trust' "
+      "claims. The result lists every mismatch and every critical finding you did not "
+      "mention. Fix what it flags; do not answer while 'honest' is false.",
+      {"a": _s("base: " + REV), "b": _s("head: " + REV),
+       "claims": {"type": "array", "items": {"type": "object"},
+                  "description": "e.g. {\"finding\": \"R001\", \"confidence_class\": "
+                  "\"rule_based\", \"severity\": \"critical\", \"quotes\": [\"4190\"]}"}},
+      ["a", "b", "claims"])
+def check_claims_tool(repo, args):
+    return check_claims(analyze(repo, args["a"], args["b"]), args["claims"])
 
 
 @tool("vcm_explain", "Plain-English explanation of the change between two revisions.",
@@ -279,6 +298,20 @@ def catalog_unreviewed(repo, args):
     rows = [r for r in rows if r["unverified"]]
     return {"parts_total": len(cat.parts), "parts_with_unverified_values": len(rows),
             "parts": rows[:200]}
+
+
+@tool("vcm_catalog_priority", "Which catalog parts the registered units use most, and how many "
+      "of each part's values a named person has verified. Tells a human where reviewing time "
+      "buys the most trust. You cannot record a review.",
+      {"type": _s("part type"), "rev": _s("count this revision instead of registered units"),
+       "top": _i("only the N most-used parts", minimum=1, maximum=100)})
+def catalog_priority(repo, args):
+    from vcm_ai import review as cr
+    cat = Catalog.load(project_dir=repo.root)
+    ranked = cr.priority(repo, cat, [args["rev"]] if args.get("rev") else None, args.get("type"))
+    return {"parts": ranked[: args.get("top", 25)], "parts_in_use": len(ranked),
+            "values_checked": sum(r["verified"] for r in ranked),
+            "values_total": sum(r["fields"] for r in ranked)}
 
 
 def _criteria(args: dict) -> dict:

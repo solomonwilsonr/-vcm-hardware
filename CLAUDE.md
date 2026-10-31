@@ -21,7 +21,7 @@ confidence classes, which were already domain-agnostic. The board domain still w
 tested (`examples/demo-pcb.sh`, `tests/test_impact.py`) — it is simply no longer the product.
 Do not reintroduce PCB vocabulary into user-facing strings.
 
-Current state: a working MVP, 278 passing tests, Appwrite TablesDB live. Trust is in place
+Current state: a working MVP, 306 passing tests, Appwrite TablesDB live. Trust is in place
 (Ed25519 signatures, hash-chained audit log, token auth with roles, policies), VCM can read real
 machines (Redfish / `nvidia-smi` captures, drift, measured draw) and reason across a fleet (racks,
 recalls, rack power, rollout waves, NetBox placement), and teams can share history through remotes
@@ -96,6 +96,10 @@ These are project invariants, not style preferences:
   `vcm_mcp.proposals.ACTIONS`: each would let an agent manufacture trust or act unreviewed.
   `tests/test_mcp.py` fails if a tool name contains one of those verbs, if a read tool changes
   repository state, or if an agent identity (`agent:` prefix) or the proposer can decide.
+- **Only a named person earns `reviewed`.** `vcm_ai.review.apply_worksheet` validates every row
+  first and applies none if any is wrong; it refuses an agent as reviewer, a missing source, and an
+  `ok` for a value that changed since the sheet was written. Do not add a path that records a
+  review without a person and a citation, and do not expose one to MCP.
 - **No merge.** Remotes are fast-forward only; differing tags and records are reported as
   conflicts and never overwritten. Do not add a merge for design files.
 - **Docs stay honest.** If something is not implemented, mark it *Planned*. Update the
@@ -181,6 +185,18 @@ rather than claiming none ran.
   numbers and firmware versions alone and never rewrites bare dotted numbers in prose (a firmware
   version looks like an IP); it reports those as possible leaks. Do not weaken that to hide noise. Matching runs in passes from strict
   to loose (`vcm_diff/drift.py`): the property tests caught greedy matching inventing mismatches.
+- **`summary.trust` is a floor, not a census.** It counts catalog values findings cite as evidence
+  (via `cite()`); rules that use an input without citing it (the power budget's per-part wattages)
+  are not counted. Keep the wording that says so, and cite values in new rules.
+- **The claim checker never takes a report from the caller.** `vcm_check_claims` recomputes
+  `analyze` from the repository, so there is nowhere to pass a fabricated one. Completeness (every
+  critical finding mentioned) is part of `honest`.
+- **Evals grade honesty, mechanically, and have not met a live model.** The reference answerer must
+  pass all of `vcm_mcp.evals.CASES` and every flawed built-in must fail exactly its own cases
+  (`tests/test_claims_evals.py` pins both, and CI runs `vcm eval run` and expects `--agent sloppy` to
+  fail). When you add a case, add the flawed answerer it exists to catch. The first run of these
+  evals found two flaws in the evals themselves (a "quiet" scenario that was not quiet, a regex too
+  narrow for the reference's own wording): run new cases against all the answerers before trusting them.
 - **The impact report is a published schema** (`vcm-impact/1`,
   `docs/schemas/impact-report.schema.json`). Adding fields is fine; removing or changing one needs
   `vcm-impact/2`. `tests/test_schema_and_properties.py` validates real reports against it.
@@ -208,9 +224,10 @@ rather than claiming none ran.
 | 7 | Manifests drift from machines | **done for captures** — Redfish and `nvidia-smi` parsing, `vcm drift`, measured draw in reports. Live Redfish/NetBox fetchers untested against real services |
 | 8 | Single-node view only | **done** — racks, fleet query/recall, rack power, rollout waves, NetBox placement import |
 
-**Recommended next:** real captures from a real BMC and NetBox to replace the synthetic samples;
-human datasheet reviews of the parts the demo relies on; then 3 (real KiCad fixtures), which
-de-risks 1.
+**Recommended next:** real captures from a real BMC and NetBox (scrub with `vcm inventory
+sanitize`, drop into `tests/captures/`); human datasheet reviews of the parts your units use most
+(`vcm catalog priority`, `worksheet`, `review --from-csv`); run `vcm eval` against a live agent;
+then 3 (real KiCad fixtures), which de-risks 1.
 
 ### 2. Component catalog — mostly built
 

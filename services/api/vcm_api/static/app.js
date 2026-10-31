@@ -397,6 +397,10 @@
       stat(artn, "files"),
       stat(impact.findings.length, "findings"),
       stat(sev.critical || 0, "critical", sev.critical ? "bad" : null),
+      impact.summary.trust && impact.summary.trust.catalog_values
+        ? stat(impact.summary.trust.catalog_verified + "/" + impact.summary.trust.catalog_values,
+            "catalog values checked", impact.summary.trust.catalog_verified ? null : "bad")
+        : null,
       stat(impact.catalog && typeof impact.catalog.ratio === "number"
         ? Math.round(impact.catalog.ratio * 100) + "%" : "n/a", "catalog"),
       stat(vcmp ? vcmp.status.from + "→" + vcmp.status.to : "n/a", "validation",

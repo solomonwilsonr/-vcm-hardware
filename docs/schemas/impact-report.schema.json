@@ -33,7 +33,17 @@
           }
         },
         "changed_components": {"type": "array", "items": {"type": "string"}},
-        "catalog_coverage": {"type": "number", "minimum": 0, "maximum": 1}
+        "catalog_coverage": {"type": "number", "minimum": 0, "maximum": 1},
+        "trust": {
+          "type": "object",
+          "description": "Distinct values the findings cite as evidence (a rule may use inputs it does not cite individually, so this is a floor, not a census): catalog values, how many of them a named person verified, and values declared in the node manifest.",
+          "required": ["catalog_values", "catalog_verified", "declared_values"],
+          "properties": {
+            "catalog_values": {"type": "integer", "minimum": 0},
+            "catalog_verified": {"type": "integer", "minimum": 0},
+            "declared_values": {"type": "integer", "minimum": 0}
+          }
+        }
       }
     },
     "catalog": {

@@ -40,7 +40,13 @@ PROMPTS = {
             "established, and say plainly where catalog values are unverified or a part is unknown.\n"
             "4. If an observation of the base exists, mention drift; if not, say the base has not "
             "been checked against the machine.\n"
-            "5. Finish with a recommendation. If a follow-up action is appropriate, use "
+            "5. Quote summary.trust: how many catalog values the findings cite and how many a "
+            "named person verified. Say so plainly when it is zero.\n"
+            "6. Before you answer, call vcm_check_claims with every finding you will cite (id, "
+            "confidence_class, severity, the numbers you will quote) and fix whatever it flags. "
+            "Mention every critical finding it lists as unmentioned. Do not say a change is "
+            "'safe': absence of findings is absence of knowledge.\n"
+            "7. Finish with a recommendation. If a follow-up action is appropriate, use "
             "vcm_propose with a rationale a person can judge, and tell the user it needs approval."),
     },
     "fleet_upgrade_plan": {

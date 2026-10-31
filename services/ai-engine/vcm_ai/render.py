@@ -40,6 +40,12 @@ def to_markdown(report: dict) -> str:
          f"Changed components: {', '.join(s['changed_components']) or 'none'}  ",
          "Findings: " + ", ".join(f"{k} {v}" for k, v in s["by_class"].items())
          + " | severity: " + ", ".join(f"{k} {v}" for k, v in s["by_severity"].items()), ""]
+    t = s.get("trust")
+    if t and (t["catalog_values"] or t["declared_values"]):
+        L.insert(-1, f"Values cited as evidence (not every input is cited individually): "
+                     f"{t['catalog_values']} from the catalog "
+                     f"({t['catalog_verified']} checked by a named person), "
+                     f"{t['declared_values']} declared in the node manifest.  ")
     for cls, title, blurb in SECTIONS:
         items = [f for f in report["findings"] if f["confidence_class"] == cls]
         L += [f"## {title} ({len(items)})", f"_{blurb}_", ""]

@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from vcm_ai import analyze, get_provider, to_markdown
+from vcm_ai import review as catalog_review
 from vcm_ai.catalog import (
     NUMERIC_FIELDS,
     PROJECT_CATALOG_DIR,
@@ -748,6 +749,28 @@ def cmd_proposal(args) -> int:
     return 0
 
 
+def cmd_eval(args) -> int:
+    import tempfile
+
+    from vcm_mcp import evals
+    if args.eval_cmd == "list":
+        for c in evals.CASES:
+            print(f"{c.id:22} {c.title}")
+        return 0
+    agent = evals.REFERENCE.get(args.agent) or evals.external_agent(args.agent, args.timeout)
+    if args.agent not in evals.REFERENCE:
+        print(f"running external agent: {args.agent}", file=sys.stderr)
+    if args.keep:
+        work = Path(args.keep)
+        work.mkdir(parents=True, exist_ok=True)
+        res = evals.run_cases(agent, work, args.case)
+    else:
+        with tempfile.TemporaryDirectory() as d:
+            res = evals.run_cases(agent, Path(d), args.case)
+    _dump(res) if args.json else print(evals.render(res))
+    return 0 if res["passed"] == res["total"] else 1
+
+
 def cmd_audit(args) -> int:
     log = _repo(args).audit
     if args.audit_cmd == "verify":
@@ -850,6 +873,9 @@ def cmd_catalog(args) -> int:
         print(f"Imported {len(parts)} parts into {dest}")
         return 0
 
+    if args.catalog_cmd in ("priority", "worksheet"):
+        repo = _repo(args)
+        return _catalog_prep(args, repo, Catalog.load(project_dir=repo.root))
     catalog = Catalog.load(project_dir=Path.cwd())
     if args.catalog_cmd == "review":
         return _catalog_review(args, catalog)
@@ -904,7 +930,78 @@ def cmd_catalog(args) -> int:
     return 0
 
 
+def _catalog_prep(args, repo: Repository, catalog: Catalog) -> int:
+    revs = [args.rev] if args.rev else None
+    if args.catalog_cmd == "worksheet":
+        text = catalog_review.worksheet(repo, catalog, revs, args.type, args.top)
+        rows = max(0, text.count("\n") - 1)
+        if args.out:
+            Path(args.out).write_text(text)
+            print(f"wrote {rows} value(s) to check into {args.out}, most-used parts first.")
+            print("For each row you check: set decision to ok (or correct, with corrected_value), "
+                  "name the datasheet and page in datasheet_source, and put your own name in "
+                  "checked_by. Leave rows you did not check blank. Then:\n"
+                  f"  vcm catalog review --from-csv {args.out}")
+        else:
+            print(text, end="")
+        return 0
+    ranked = catalog_review.priority(repo, catalog, revs, args.type)
+    ranked = ranked[: args.top] if args.top else ranked
+    if args.json:
+        _dump(ranked)
+        return 0
+    counted = ranked[0]["counted_by"] if ranked else "units"
+    print(f"{len(ranked)} part(s) in use (counted by {counted}), most-used first")
+    for r in ranked:
+        state = "REVIEWED" if r["reviewed"] else f"{r['verified']}/{r['fields']} values verified"
+        print(f"  {r['part']:28} {r['type']:6} {r['units']:5} unit(s) {r['components']:5} "
+              f"component(s)  {state}")
+    total = sum(r["fields"] for r in ranked)
+    checked = sum(r["verified"] for r in ranked)
+    print(f"{checked} of {total} values on these parts have been checked by a named person")
+    return 0
+
+
+def _catalog_sheet(args, catalog: Catalog) -> int:
+    text = Path(args.from_csv).read_text()
+    try:
+        res = catalog_review.apply_worksheet(catalog, text, now_iso())
+    except CatalogError as e:
+        print(f"vcm: error: {e}", file=sys.stderr)
+        return 1
+    target = USER_CATALOG if args.scope == "user" else Path.cwd() / PROJECT_CATALOG_DIR
+    target.mkdir(parents=True, exist_ok=True)
+    dest = target / "reviews.json"
+    existing = json.loads(dest.read_text())["parts"] if dest.is_file() else []
+    keys = {p["match"][0].upper() for p in res["parts"]}
+    existing = [p for p in existing if p["match"][0].upper() not in keys] + res["parts"]
+    dest.write_text(json.dumps({"parts": existing}, indent=1) + "\n")
+    print(f"recorded {res['confirmed']} confirmation(s) and {res['corrected']} correction(s) "
+          f"on {len(res['parts'])} part(s) in {dest}; {res['skipped']} blank row(s) skipped")
+    if res["now_reviewed"]:
+        print(f"  now REVIEWED: {', '.join(res['now_reviewed'])}")
+    for part, left in sorted(res["still_unverified"].items()):
+        print(f"  {part}: still unverified: {', '.join(left)}")
+    try:
+        repo = Repository.discover(Path.cwd())
+        for p in res["parts"]:
+            repo.audit.append("catalog.review", p["match"][0], {"worksheet": args.from_csv},
+                              actor=next(iter({s["verified_by"] for s in
+                                               p.get("sources", {}).values()
+                                               if isinstance(s, dict) and s.get("verified_by")}),
+                                         None))
+    except VcmError:
+        pass
+    return 0
+
+
 def _catalog_review(args, catalog: Catalog) -> int:
+    if args.from_csv:
+        return _catalog_sheet(args, catalog)
+    if not (args.mpn and args.by and args.source):
+        print("vcm: error: give a part with --by and --source, or --from-csv a worksheet",
+              file=sys.stderr)
+        return 2
     part = catalog.find(args.mpn, args.mpn)
     if part is None:
         print(f"{args.mpn}: not in the catalog; import it first", file=sys.stderr)
@@ -1319,6 +1416,19 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--by", help="your name (default: $VCM_AUTHOR)")
     s.add_argument("--reason", default="")
 
+    ev = sub.add_parser("eval", help="does an agent answer honestly from VCM's output?")
+    ev = ev.add_subparsers(dest="eval_cmd", required=True)
+    ev.add_parser("list").set_defaults(fn=cmd_eval)
+    s = ev.add_parser("run")
+    s.set_defaults(fn=cmd_eval)
+    s.add_argument("--agent", default="reference",
+                   help="'reference' (honest, must pass), a flawed built-in (sloppy, fabricating, "
+                   "overclaiming, incomplete, obedient: must fail), or a command to run your agent")
+    s.add_argument("--case", action="append", help="only this case (repeatable)")
+    s.add_argument("--timeout", type=float, default=900.0)
+    s.add_argument("--keep", help="keep the scenario repositories in this directory")
+    s.add_argument("--json", action="store_true")
+
     au = sub.add_parser("audit", help="hash-chained audit log")
     au = au.add_subparsers(dest="audit_cmd", required=True)
     s = au.add_parser("log")
@@ -1342,11 +1452,26 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_catalog)
     s.add_argument("--rev", default="HEAD")
     s.add_argument("--json", action="store_true")
+    s = c.add_parser("priority", help="which parts your units use most, and how much of each "
+                     "has been checked")
+    s.set_defaults(fn=cmd_catalog)
+    s.add_argument("--type")
+    s.add_argument("--rev", help="count this revision instead of registered units")
+    s.add_argument("--top", type=int)
+    s.add_argument("--json", action="store_true")
+    s = c.add_parser("worksheet", help="a spreadsheet of values to check, most-used parts first")
+    s.set_defaults(fn=cmd_catalog)
+    s.add_argument("--type")
+    s.add_argument("--rev", help="rank by this revision instead of registered units")
+    s.add_argument("--top", type=int, help="only the N most-used parts")
+    s.add_argument("--out", help="write to this file (default: print)")
     s = c.add_parser("review", help="record that a human checked part values against a source")
     s.set_defaults(fn=cmd_catalog)
-    s.add_argument("mpn")
-    s.add_argument("--by", required=True, help="who checked it")
-    s.add_argument("--source", required=True, help="citation, e.g. 'datasheet DS-123 rev 2 p.4'")
+    s.add_argument("mpn", nargs="?")
+    s.add_argument("--from-csv", help="a filled-in worksheet (all rows are checked first; "
+                   "nothing is applied if any is wrong)")
+    s.add_argument("--by", help="who checked it")
+    s.add_argument("--source", help="citation, e.g. 'datasheet DS-123 rev 2 p.4'")
     s.add_argument("--set", action="append", metavar="FIELD=VALUE",
                    help="correct a value while reviewing it (repeatable)")
     s.add_argument("--confirm", action="append", metavar="FIELD",

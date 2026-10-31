@@ -478,6 +478,28 @@ def _speculative_node(b: _Builder, d: dict, rule_ids: list[str]) -> None:
               [{"type": "declared", "source": "node manifest"}], sorted(gpus)[:4])
 
 
+def trust_figure(findings: list[dict]) -> dict:
+    """How much of what the findings rest on has been checked by a named person.
+
+    Counts each distinct value once, however many findings cite it: catalog values (and how many
+    carry a ``verified_by``) versus values declared in the node manifest, which describe this node
+    as built but are not themselves checked by VCM.
+    """
+    catalog: dict[tuple, bool] = {}
+    declared: set[tuple] = set()
+    for f in findings:
+        for e in f["evidence"]:
+            if e.get("type") != "db":
+                continue
+            for key, v in (e.get("fields") or {}).items():
+                if v.get("from") == "catalog":
+                    catalog[(e.get("part"), key)] = bool(v.get("verified_by"))
+                elif v.get("from") == "node manifest":
+                    declared.add((e.get("ref"), key))
+    return {"catalog_values": len(catalog), "catalog_verified": sum(catalog.values()),
+            "declared_values": len(declared)}
+
+
 def analyze(repo, rev_a: str, rev_b: str, provider: LLMProvider | None = None,
             catalog: Catalog | None = None) -> dict:
     """Impact analysis from rev_a to rev_b. Fully offline unless a non-default provider is passed."""
@@ -520,7 +542,8 @@ def analyze(repo, rev_a: str, rev_b: str, provider: LLMProvider | None = None,
     return {"schema": REPORT_SCHEMA, "from": a.id, "to": bb.id, "provider": provider.name,
             "summary": {"by_class": counts, "by_severity": sev,
                         "changed_components": d["changed_refs"],
-                        "catalog_coverage": coverage["ratio"]},
+                        "catalog_coverage": coverage["ratio"],
+                        "trust": trust_figure(b.findings)},
             "catalog": {**coverage, **catalog.describe()},
             "rules": {"domain": "node" if is_node_design(db) else "board",
                       "plugins": plugin_status},

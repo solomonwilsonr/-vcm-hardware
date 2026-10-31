@@ -41,6 +41,66 @@
       <a class="btn ghost" href="#fleet">How the fleet works</a>
       <span class="note">no network at runtime</span>
     </div>
+    <div class="stage rise" style="--d:280ms" role="img"
+         aria-label="The VCM dashboard comparing revisions v1.0 and v1.1: four critical findings, a power budget of 4190 watts against 4000 usable, and findings split by confidence class.">
+      <span class="orb"></span><span class="grain"></span>
+      <div class="win" aria-hidden="true">
+        <div class="tb">
+          <div class="lights"><i></i><i></i><i></i></div>
+          <div class="ttl"><span class="gem"></span>VCM &mdash; Version Control for Hardware</div>
+          <div class="sp"><span class="pill">offline &middot; local repository</span><span class="tbtn">Theme</span></div>
+        </div>
+        <div class="body">
+          <div class="rail">
+            <div class="on">Compare<small>diff &amp; impact</small></div>
+            <div>Lineage<small>parts &rarr; built units</small></div>
+            <div>Releases<small>manifests &amp; rollback</small></div>
+            <div>Review<small>hardware PRs</small></div>
+            <div>Fleet<small>racks, power &amp; rollout</small></div>
+            <div>History<small>revision timeline</small></div>
+          </div>
+          <div class="main">
+            <h4>Compare revisions</h4>
+            <p class="sm">8x A100 PCIe 40GB &rarr; 8x H100 NVL 94GB, with the evidence behind every finding</p>
+            <div class="ctrl">
+              <div class="fld"><small>Base</small><div class="inp">v1.0</div></div>
+              <div class="fld"><small>Head</small><div class="inp">v1.1</div></div>
+              <div class="go">Compare</div>
+            </div>
+            <div class="panels">
+              <div class="panel">
+                <div class="pt">Impact</div>
+                <div class="ps">4 critical &middot; 10 warning &middot; 7 info</div>
+                <div class="find"><span class="sev c">CRITICAL</span><span class="ft">PSU_BANK cannot supply the node under its redundancy policy</span>
+                  <span class="fd">8000 W installed, <b>4000 W usable</b> under 2+2. Declared draw <b>4190 W</b>.</span>
+                  <span class="tags"><span class="tg r">RULE-BASED</span><span class="tg e">R001 &middot; evidence attached</span></span></div>
+                <div class="find"><span class="sev c">CRITICAL</span><span class="ft">Installed driver is below the required minimum</span>
+                  <span class="fd">Node declares <b>470.223.02</b>; H100 NVL requires <b>525.60.13</b>.</span>
+                  <span class="tags"><span class="tg r">RULE-BASED</span><span class="tg e">R006 &middot; evidence attached</span></span></div>
+                <div class="find"><span class="sev c">CRITICAL</span><span class="ft">Base configuration does not match the machine it describes</span>
+                  <span class="fd">Observed by redfish, nvidia-smi: <b>DIMM11</b> not reported.</span>
+                  <span class="tags"><span class="tg v">VERIFIED</span><span class="tg e">V007 &middot; capture hash attached</span></span></div>
+                <div class="find"><span class="sev w">WARNING</span><span class="ft">Power connector changed: 8-pin EPS &rarr; 12VHPWR on 8 devices</span>
+                  <span class="tags"><span class="tg r">RULE-BASED</span><span class="tg e">R007</span></span></div>
+              </div>
+              <div class="panel">
+                <div class="pt">Power budget</div>
+                <div class="ps">Declared draw under 2+2 redundancy</div>
+                <div class="big bad">4190 <small>W of 4000 W</small></div>
+                <div class="trend"><b>&uarr; 190 W</b> over the usable budget</div>
+                <div class="meter2" style="--w:100%; --l:95.4%"><span class="f"></span><span class="l"></span></div>
+                <div class="mrow"><b>104.8% of budget</b><span>usable 4000 W</span></div>
+                <div class="seg" style="--c:#3fb950"><div class="sh"><span>Verified</span><b>8</b></div><div class="bar"><i style="--w:38%"></i></div></div>
+                <div class="seg" style="--c:#a371f7"><div class="sh"><span>Rule-based</span><b>9</b></div><div class="bar"><i style="--w:43%"></i></div></div>
+                <div class="seg" style="--c:#8b949e"><div class="sh"><span>Speculative</span><b>4</b></div><div class="bar"><i style="--w:19%"></i></div></div>
+              </div>
+            </div>
+            <div class="foot"><span>Catalog: 90 parts &middot; 0 datasheet-reviewed</span><span class="lnk"><span>Open the evidence for R001</span><span>&rarr;</span></span></div>
+          </div>
+        </div>
+      </div>
+      <p class="note">The dashboard &middot; sample data from examples/gpu-node</p>
+    </div>
     <div class="term ">
       <div class="bar"><i></i><i></i><i></i><span>vcm impact v1.0 v1.1</span></div>
 <pre><span class="ln"><span class="dim"># 8x NVIDIA A100 PCIe 40GB  &rarr;  8x NVIDIA H100 NVL 94GB</span></span>
@@ -287,6 +347,53 @@
 <span class="ln">NODE-0002</span>
 <span class="ln"><span class="hi">2 unit(s)</span>  <span class="dim">&larr; bob answers for the whole fleet</span></span></pre>
     </div>
+    <div class="stage amber" data-reveal role="img"
+         aria-label="The Fleet view in a browser: rack R02 would exceed its power budget after moving to v1.1, while R01 and R03 stay within budget.">
+      <span class="orb"></span><span class="grain"></span>
+      <div class="browser" aria-hidden="true">
+        <div class="win">
+          <div class="chrome">
+            <div class="lights"><i></i><i></i><i></i></div>
+            <div class="url"><svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="5.5" width="8" height="5.5" rx="1.3"/><path d="M4 5.5V4a2 2 0 014 0v1.5"/></svg>127.0.0.1:8000/#/fleet</div>
+            <div class="rt"></div>
+          </div>
+          <div class="body">
+            <div class="rail">
+              <div>Compare<small>diff &amp; impact</small></div>
+              <div>Lineage<small>parts &rarr; built units</small></div>
+              <div>Releases<small>manifests &amp; rollback</small></div>
+              <div>Review<small>hardware PRs</small></div>
+              <div class="on">Fleet<small>racks, power &amp; rollout</small></div>
+              <div>History<small>revision timeline</small></div>
+            </div>
+            <div class="main">
+              <h4>Fleet</h4>
+              <p class="sm">Declared draw per rack, before and after moving every unit to v1.1</p>
+              <div class="verdict2"><span style="color:#ff8b84">&#9650;</span><div><b>1 rack would exceed the power budget after moving to v1.1</b><span>R02. Draw unknown for NODE-0009; excluded from the totals.</span></div></div>
+              <div class="rack">
+                <div class="rk"><b>R01</b><span class="st ok">WITHIN BUDGET</span><span class="d">3 units &middot; budget 12,000 W</span></div>
+                <div class="wb" style="--l:95.2%"><i style="--w:76.2%"></i><u></u></div>
+                <div class="wb" style="--l:95.2%"><i class="after" style="--w:88.9%"></i><u></u></div>
+                <div class="wl"><span>now 9,600 W</span><span>after 11,200 W</span></div>
+              </div>
+              <div class="rack">
+                <div class="rk"><b>R02</b><span class="st over">OVER BUDGET</span><span class="d">2 units &middot; budget 10,000 W</span></div>
+                <div class="wb" style="--l:79.4%"><i style="--w:66.7%"></i><u></u></div>
+                <div class="wb" style="--l:79.4%"><i class="after" style="--w:82.4%"></i><u></u></div>
+                <div class="wl"><span>now 8,400 W</span><span>after 10,380 W</span></div>
+              </div>
+              <div class="rack">
+                <div class="rk"><b>R03</b><span class="st ok">WITHIN BUDGET</span><span class="d">2 units &middot; budget 12,000 W</span></div>
+                <div class="wb" style="--l:95.2%"><i style="--w:54.8%"></i><u></u></div>
+                <div class="wb" style="--l:95.2%"><i class="after" style="--w:64.3%"></i><u></u></div>
+                <div class="wl"><span>now 6,900 W</span><span>after 8,100 W</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="note">Fleet view &middot; illustrative sample data, not a real site</p>
+    </div>
     <p class="sub" style="margin:26px 0 0" data-reveal>
       With a per-clone registry, this is exactly where a recall quietly under-reports &mdash; and a
       recall is the one question you cannot get half right.
@@ -317,6 +424,36 @@
       <div class="card"><div class="n">Interfaces</div><h3>CLI, API, dashboard, MCP</h3>
         <p>A <code>vcm</code> command, an authenticated REST API with roles, an offline dashboard,
            and an MCP server so an agent can read freely and propose &mdash; a person decides.</p></div>
+    </div>
+    <div class="stage teal" data-reveal style="margin-top:34px" role="img"
+         aria-label="An agent reads an impact report through the MCP server, reports two rule-based findings honestly, and opens a proposal that stays pending until a person approves it.">
+      <span class="orb"></span><span class="grain"></span>
+      <div class="win" aria-hidden="true">
+        <div class="tb">
+          <div class="lights"><i></i><i></i><i></i></div>
+          <div class="ttl"><span class="gem"></span>Agent &middot; vcm MCP server</div>
+          <div class="sp"><span class="pill">read-only tools</span></div>
+        </div>
+        <div class="agent">
+          <div class="chat">
+            <div class="msg me">Can we swap the A100s for H100 NVL on this node?</div>
+            <div class="tool"><span>&#9881;</span><span><code>vcm_impact</code> base=v1.0 head=v1.1</span><span class="ok">&#10003;</span></div>
+            <div class="tool"><span>&#9881;</span><span><code>vcm_check_claims</code></span><span class="ok">&#10003;</span></div>
+            <div class="msg">Not as it stands. Declared draw is <b>4190 W against 4000 W usable</b> under 2+2, and the installed driver <b>470.223.02</b> is below the <b>525.60.13</b> minimum. Both are <b>rule_based</b>, and nothing in the catalog has been checked against a datasheet. I have opened a proposal for a person to review.</div>
+            <div class="tool"><span>&#9881;</span><span><code>vcm_propose</code> pr.open</span><span class="ok">pending</span></div>
+          </div>
+          <div class="queue">
+            <div class="pt" style="font-weight:600;font-size:13px">Proposals</div>
+            <div class="prop">
+              <div class="ph"><b>pr.open</b><span class="pw">AWAITING A PERSON</span></div>
+              <div class="kv"><span>base</span><span>v1.0</span><span>head</span><span>v1.1</span><span>title</span><span>Swap A100 for H100 NVL</span><span>proposed by</span><span>agent:claude</span></div>
+              <div class="acts"><div class="a">Approve</div><div class="b">Reject</div></div>
+            </div>
+            <p class="why">Agents propose, people decide. An agent identity cannot approve, and approving re-runs the precheck under the approver&rsquo;s name.</p>
+          </div>
+        </div>
+      </div>
+      <p class="note">Illustration of the proposal workflow &middot; not a recording of a live agent session</p>
     </div>
   </div>
 </section>

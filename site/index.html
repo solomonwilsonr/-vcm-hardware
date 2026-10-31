@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VCM &mdash; version control for datacenter hardware</title>
+<meta name="description" content="Commit a node's configuration, see what a change breaks, and trace which physical units are affected. Every finding says how much to trust it.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230d1117'/%3E%3Cpath d='M3 4l3 8 3-8' stroke='%234493f8' stroke-width='1.6' fill='none'/%3E%3Cpath d='M11 4v8' stroke='%233fb950' stroke-width='1.6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site">
+  <div class="wrap">
+    <a class="logo" href="#top">VCM</a>
+    <nav>
+      <a href="#what">What it does</a>
+      <a href="#appwrite">Fleet of record</a>
+      <a href="#trust">Confidence</a>
+      <a href="#limits">Limitations</a>
+      <a href="https://github.com/solomonwilsonr/-vcm-hardware">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+<div class="hero" id="top">
+  <div class="wrap">
+    <span class="eyebrow"><span class="dot"></span> Open source &middot; Apache-2.0 &middot; runs offline</span>
+    <h1>Every hardware change has a <span class="accent">blast radius</span>.</h1>
+    <p class="lede">
+      VCM is version control for datacenter hardware. Commit a node's configuration the way you
+      commit code, and it tells you what the change breaks, which physical units are affected, and
+      how much to trust every single thing it says.
+    </p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/solomonwilsonr/-vcm-hardware">View on GitHub</a>
+      <a class="btn ghost" href="#appwrite">How the fleet works</a>
+      <span class="note">pip install -e "." &middot; no network at runtime</span>
+    </div>
+
+    <div class="term" role="img" aria-label="Terminal output of vcm impact, showing 21 findings across three confidence classes, including four critical ones.">
+      <div class="bar"><i></i><i></i><i></i><span>vcm impact v1.0 v1.1</span></div>
+<pre><span class="dim"># 8x NVIDIA A100 PCIe 40GB  &rarr;  8x NVIDIA H100 NVL 94GB</span>
+<span class="dim"># the manifest diff is eight replaced line items. this is what it actually means:</span>
+
+<span class="hi">Findings:</span> <span class="v">verified 8</span>, <span class="r">rule_based 9</span>, <span class="s">speculative 4</span>   <span class="dim">| severity: critical 4, warning 10, info 7</span>
+
+<span class="c">[!! CRITICAL]</span> <span class="r">R001</span>  PSU_BANK cannot supply the node under its redundancy policy
+            4 supplies totalling 8000 W installed, <span class="hi">4000 W usable</span> under 2+2 redundancy.
+            Declared draw <span class="hi">4190 W</span>. Shortfall 190 W: losing a supply would drop the node.
+
+<span class="c">[!! CRITICAL]</span> <span class="r">R006</span>  Installed accelerator driver is below the required minimum
+            Node declares <span class="hi">470.223.02</span>; H100 NVL requires at least <span class="hi">525.60.13</span>.
+            These devices will not initialise until the driver is upgraded.
+
+<span class="c">[!! CRITICAL]</span> <span class="v">V007</span>  The base configuration does not match the machine it describes
+            Observed by redfish, nvidia-smi: DIMM11 not reported by the machine.
+
+<span class="w">[ ! WARNING]</span> <span class="r">R007</span>  Power connector changed: 8-pin EPS &rarr; 12VHPWR (16-pin) on 8 devices
+            The existing cable harness does not fit.
+
+<span class="dim">Nothing above was written down anywhere. It falls out of the dependency graph
+plus a component catalog &mdash; and every line cites the file and hash it came from.</span></pre>
+    </div>
+  </div>
+</div>
+
+<section id="what">
+  <div class="wrap">
+    <div class="label">What it does</div>
+    <h2>Three questions, answered from your files</h2>
+    <p class="sub">
+      A node is described by a manifest you commit. Accelerators, CPUs, memory, NICs and power
+      supplies are components; the things they share are power domains, PCIe roots and fabrics.
+    </p>
+    <div class="cards">
+      <div class="card lit">
+        <div class="n">01</div>
+        <h3>What exactly changed?</h3>
+        <p>A semantic diff of the inventory &mdash; models, part numbers, slots, form factors and
+           the connections between them. Not changed bytes in a JSON file.</p>
+      </div>
+      <div class="card lit">
+        <div class="n">02</div>
+        <h3>What else does it touch?</h3>
+        <p>A dependency graph plus rules for power budget under a redundancy policy, chassis
+           cooling, PCIe generation and lanes, driver minimums and connector changes.</p>
+      </div>
+      <div class="card lit">
+        <div class="n">03</div>
+        <h3>Which units are affected?</h3>
+        <p>Releases pin every file by hash. Units are registered against releases, so a recall is
+           a query rather than an archaeology project.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="appwrite">
+  <div class="wrap">
+    <div class="label">Built on Appwrite</div>
+    <h2>A fleet is not a folder on your laptop</h2>
+    <div class="split">
+      <div>
+        <p class="sub" style="margin-bottom:24px">
+          The design history belongs in your checkout. The <b>fleet</b> does not. "Which of our
+          units carry this part?" is a question about every machine, so the unit and rack registry
+          lives in Appwrite TablesDB and the local JSON is demoted to a cache.
+        </p>
+        <ul class="plain">
+          <li><b>Writes fail closed.</b> A unit the fleet never accepted must not exist locally either.</li>
+          <li><b>Reads degrade open</b>, and say <code>fleet: LOCAL CACHE, possibly stale</code> when they do.</li>
+          <li><b>Duplicate serials are refused across machines</b>, not just within one checkout.</li>
+          <li><b>A unit built from a revision this clone never fetched</b> reports <code>UNRESOLVED</code>
+              rather than quietly answering for a partial fleet.</li>
+        </ul>
+      </div>
+      <div class="term">
+        <div class="bar"><i></i><i></i><i></i><span>two checkouts, one fleet</span></div>
+<pre><span class="dim">$ alice/  vcm device register NODE-0001</span>
+<span class="dim">$ bob/    vcm device register NODE-0002</span>
+
+<span class="dim">$ bob/    vcm device list --local</span>
+NODE-0002   <span class="dim">&larr; bob's cache holds only his own</span>
+
+<span class="dim">$ bob/    vcm device affected --component GPU0</span>
+NODE-0001   <span class="p">&larr; alice's</span>
+NODE-0002
+<span class="hi">2 unit(s)</span>  <span class="dim">&larr; bob answers for the whole fleet</span>
+
+<span class="dim">With a per-clone registry, this is exactly where
+a recall quietly under-reports.</span></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="trust">
+  <div class="wrap">
+    <div class="label">Confidence</div>
+    <h2>Every finding says how much to believe it</h2>
+    <p class="sub">
+      This is the core claim. A tool that tells you what might break is only useful if you can tell
+      how much to trust each thing it says, so the class is never implied &mdash; it is labelled,
+      shaped and cited.
+    </p>
+    <div class="chips">
+      <span class="chip v"><svg width="9" height="9" aria-hidden="true"><rect width="9" height="9" fill="currentColor"/></svg> VERIFIED</span>
+      <span class="chip r"><svg width="10" height="9" aria-hidden="true"><polygon points="5,0 10,9 0,9" fill="currentColor"/></svg> RULE-BASED</span>
+      <span class="chip s"><svg width="10" height="10" aria-hidden="true"><polygon points="5,0 10,5 5,10 0,5" fill="none" stroke="currentColor" stroke-dasharray="2 2"/></svg> SPECULATIVE</span>
+    </div>
+    <div class="cards" style="margin-top:30px">
+      <div class="card">
+        <h3 style="color:var(--verified)">verified</h3>
+        <p>Derived from parsed configuration data, declared project links or stored evidence. A fact
+           about your files.</p>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--rule)">rule_based</h3>
+        <p>A heuristic from engineering rules and the component catalog. Cites the catalog entry and
+           whether anyone has checked it against a datasheet.</p>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--spec)">speculative</h3>
+        <p>A prediction, not established by data. An optional LLM provider can only ever add these
+           &mdash; never the other two.</p>
+      </div>
+    </div>
+    <div class="card honest" style="margin-top:26px">
+      <h3>Silence is never safety</h3>
+      <p>If a changed component is not in the catalog, VCM says so outright instead of returning a
+         clean-looking report. It names which checks were skipped and which still ran on declared
+         values, because a reader must never confuse <em>the rules passed</em> with
+         <em>no rules ran</em>.</p>
+    </div>
+  </div>
+</section>
+
+<section id="limits">
+  <div class="wrap">
+    <div class="label">Honest scope</div>
+    <h2>What it is not, yet</h2>
+    <p class="sub">
+      Everything the README marks <em>Implemented</em> runs and is covered by tests. Everything else
+      it marks <em>Planned</em>. The same applies here.
+    </p>
+    <div class="cards">
+      <div class="card honest">
+        <h3>The catalog is small and unreviewed</h3>
+        <p>90 parts, and <b>none has been checked against a datasheet by a human</b>. Every entry
+           carries <code>reviewed: false</code> and a named source. Thermal figures are
+           package-typical estimates; TDP is a board rating, not measured draw.</p>
+      </div>
+      <div class="card honest">
+        <h3>Rules are heuristics</h3>
+        <p>They can be wrong or incomplete. VCM discloses what it does not know; it cannot disclose
+           what it has wrong.</p>
+      </div>
+      <div class="card honest">
+        <h3>Semantic search is unverified live</h3>
+        <p>Part search on VectorsDB is implemented but has not been exercised against the real
+           service, because the API key used in development lacked the embedding scopes.</p>
+      </div>
+    </div>
+    <div class="stats" style="margin-top:34px">
+      <div><div class="n">352</div><div class="l">tests passing</div></div>
+      <div><div class="n">0</div><div class="l">network calls at runtime</div></div>
+      <div><div class="n">90</div><div class="l">catalog parts</div></div>
+      <div><div class="n">0</div><div class="l">datasheet-reviewed</div></div>
+      <div><div class="n">Apache&#8209;2.0</div><div class="l">licence</div></div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <span>VCM &mdash; version control for datacenter hardware.</span>
+    <nav>
+      <a href="https://github.com/solomonwilsonr/-vcm-hardware">Source</a>
+      <a href="https://github.com/solomonwilsonr/-vcm-hardware#readme">README</a>
+      <a href="https://github.com/solomonwilsonr/-vcm-hardware/blob/main/docs/roadmap.md">Roadmap</a>
+    </nav>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -53,14 +53,66 @@
     next();
   }
 
+  var order = ["power", "driver", "conn", "drift"];
   var chips = [].slice.call(document.querySelectorAll(".chipb"));
+  var CYCLE = 6000, auto = !reduce, hold = false, onscreen = true, timer2 = null;
+  var demo = document.getElementById("demo");
+  if (demo) demo.style.setProperty("--cycle", CYCLE + "ms");
+
+  function mark(key) {
+    chips.forEach(function (c) {
+      var on = c.getAttribute("data-k") === key;
+      c.classList.toggle("on", on);
+      c.setAttribute("aria-selected", on ? "true" : "false");
+      c.classList.remove("auto");
+    });
+  }
+  function startBar(key) {
+    var b = chips.filter(function (c) { return c.getAttribute("data-k") === key; })[0];
+    if (!b) return;
+    void b.offsetWidth;                      // restart the fill animation
+    b.classList.add("auto");
+  }
+  function clearAuto() { if (timer2) { clearTimeout(timer2); timer2 = null; } }
+  function schedule() {
+    clearAuto();
+    if (!auto || hold || !onscreen) return;
+    startBar(cur);
+    timer2 = setTimeout(function () {
+      var next = order[(order.indexOf(cur) + 1) % order.length];
+      mark(next); paint(next, true); schedule();
+    }, CYCLE);
+  }
+  function stopAuto() {
+    auto = false; clearAuto();
+    chips.forEach(function (c) { c.classList.remove("auto"); });
+  }
+
   chips.forEach(function (b) {
     b.addEventListener("click", function () {
-      chips.forEach(function (c) { c.classList.remove("on"); c.setAttribute("aria-selected", "false"); });
-      b.classList.add("on"); b.setAttribute("aria-selected", "true");
+      stopAuto();                            // a person took over; never fight them
+      mark(b.getAttribute("data-k"));
       paint(b.getAttribute("data-k"), true);
     });
   });
-  if (run) run.addEventListener("click", function () { paint(cur, true); });
+  if (run) run.addEventListener("click", function () { stopAuto(); paint(cur, true); });
+
+  /* Pause while the pointer is over the card or focus is inside it, and while it is off screen. */
+  if (demo) {
+    var pause = function () { hold = true; clearAuto(); chips.forEach(function (c) { c.classList.remove("auto"); }); };
+    var resume = function () { hold = false; schedule(); };
+    demo.addEventListener("pointerenter", pause);
+    demo.addEventListener("pointerleave", resume);
+    demo.addEventListener("focusin", pause);
+    demo.addEventListener("focusout", resume);
+    if ("IntersectionObserver" in window) {
+      new IntersectionObserver(function (es) {
+        onscreen = es[0].isIntersecting;
+        if (onscreen) schedule(); else clearAuto();
+      }, { threshold: 0.3 }).observe(demo);
+    }
+  }
+
   paint("power", false);
+  schedule();
 })();

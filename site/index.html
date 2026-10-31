@@ -10,6 +10,7 @@
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
+<div class="progress" aria-hidden="true"><i></i></div>
 
 <div class="announce"><span>New: confidence labels on every finding</span><i></i><a href="#trust">See how it works &rsaquo;</a></div>
 <header class="site">
@@ -34,7 +35,7 @@
 <div class="hero" id="top">
   <div class="wrap frame">
     <span class="eyebrow rise">Version control for datacenter hardware</span>
-    <h1 class="rise" style="--d:70ms">Every hardware change has a blast&nbsp;radius.</h1>
+    <h1 data-split>Every hardware change has a blast&nbsp;radius.</h1>
     <p class="lede rise" style="--d:140ms">
       Commit a node's configuration the way you commit code. VCM tells you what the change breaks,
       which physical units are affected, and how much to trust every single thing it says.
@@ -68,6 +69,33 @@
     <span>Stores in</span><b>local files</b><b>Appwrite TablesDB</b>
   </div>
 </div>
+
+<section id="how">
+  <div class="wrap">
+    <div class="label" data-reveal>How it works</div>
+    <h2 data-reveal style="--d:60ms">Three commands from change to consequence</h2>
+    <div class="steps" data-steps>
+      <div class="step">
+        <div class="stepn"><span>1</span></div>
+        <h3>Commit the configuration</h3>
+        <p>Snapshot a node manifest the way you snapshot code. Every file is pinned by hash.</p>
+        <code>vcm commit -m "v1.1" --tag v1.1</code>
+      </div>
+      <div class="step">
+        <div class="stepn"><span>2</span></div>
+        <h3>See what the change breaks</h3>
+        <p>Compare two revisions. Each finding says whether it is verified, rule-based or a guess.</p>
+        <code>vcm impact v1.0 v1.1</code>
+      </div>
+      <div class="step">
+        <div class="stepn"><span>3</span></div>
+        <h3>Trace the physical units</h3>
+        <p>Ask which registered machines carry an affected part, across the whole fleet.</p>
+        <code>vcm device affected --component GPU0</code>
+      </div>
+    </div>
+  </div>
+</section>
 
 <section id="change">
   <div class="wrap">

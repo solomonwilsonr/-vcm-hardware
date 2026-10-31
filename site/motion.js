@@ -14,8 +14,65 @@
     reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   } catch (e) { /* matchMedia unavailable; treat motion as allowed */ }
 
+  var header = document.querySelector("header.site");
+  function onScrollState() {
+    if (header) header.classList.toggle("scrolled", window.scrollY > 24);
+  }
+  window.addEventListener("scroll", onScrollState, { passive: true });
+  onScrollState();
+
   if (reduced) return;            // nothing to replay; markup is already correct
   document.documentElement.classList.add("js");
+
+  /* Headline: wrap each word so it can rise in turn. Text content is unchanged. */
+  [].slice.call(document.querySelectorAll("[data-split]")).forEach(function (el) {
+    var words = el.textContent.replace(/\u00a0/g, "\u00a0").split(/(\s+)/);
+    el.textContent = "";
+    var i = 0;
+    words.forEach(function (w) {
+      if (!w) return;
+      if (/^\s+$/.test(w)) { el.appendChild(document.createTextNode(" ")); return; }
+      var s = document.createElement("span");
+      s.className = "wd"; s.style.setProperty("--i", i++); s.textContent = w;
+      el.appendChild(s);
+    });
+  });
+
+  /* Steps: number badges pop in sequence once the row is visible. */
+  [].slice.call(document.querySelectorAll("[data-steps] .stepn")).forEach(function (n, i) {
+    n.style.setProperty("--k", i);
+  });
+
+  /* Scroll progress bar, throttled to animation frames. */
+  var bar = document.querySelector(".progress i");
+  if (bar) {
+    var ticking = false;
+    var update = function () {
+      var max = document.documentElement.scrollHeight - window.innerHeight;
+      bar.style.transform = "scaleX(" + (max > 0 ? Math.min(1, window.scrollY / max) : 0).toFixed(4) + ")";
+      ticking = false;
+    };
+    window.addEventListener("scroll", function () {
+      if (!ticking) { ticking = true; requestAnimationFrame(update); }
+    }, { passive: true });
+    update();
+  }
+
+  /* Pointer glow: expose the pointer position to CSS on the stage and on cards. */
+  function track(el) {
+    var raf = 0, x = 0, y = 0;
+    el.addEventListener("pointermove", function (e) {
+      var r = el.getBoundingClientRect();
+      x = e.clientX - r.left; y = e.clientY - r.top;
+      if (raf) return;
+      raf = requestAnimationFrame(function () {
+        el.style.setProperty("--mx", x + "px");
+        el.style.setProperty("--my", y + "px");
+        raf = 0;
+      });
+    });
+  }
+  [].slice.call(document.querySelectorAll(".stage, .card")).forEach(track);
 
   /* Stagger children of a group so a row of cards arrives in sequence. */
   [].slice.call(document.querySelectorAll("[data-stagger]")).forEach(function (group) {
@@ -71,7 +128,7 @@
   /* --------------------------------------------------------------- replay */
 
   var targets = [].slice.call(document.querySelectorAll(
-    "[data-reveal], .term, .blast, .sync, .meter, .ring-svg, [data-count]"));
+    "[data-reveal], [data-steps], .term, .blast, .sync, .meter, .ring-svg, [data-count]"));
 
   function play(el) {
     if (el.classList.contains("in")) return;

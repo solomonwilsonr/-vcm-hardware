@@ -16,7 +16,7 @@ A fleet owner wants to upgrade `gpu-node-01` from 8x A100 to 8x H100 NVL. Same c
 |------|-----|----------------|----------------------------|
 | 0:00–0:08 | "Hardware changes are tracked in spreadsheets. A GPU swap looks like one line, but it touches power, cooling and firmware." | Title slide / `vcm log` with v1.0 and v1.1 | Two committed configurations |
 | 0:08–0:20 | "VCM diffs the node inventory, not bytes. One finding, not eight — the 8 GPUs are grouped." | `vcm diff v1.0 v1.1` | One grouped replacement line |
-| 0:20–0:38 | "Then it asks what else is affected. Every finding is labelled by how sure we are: verified from data, rule-based from engineering rules, or speculative." | `vcm impact v1.0 v1.1 | sed -n 1,36p` | Verified section, then the R001 power-budget finding under Rule-based, with evidence |
+| 0:20–0:38 | "Then it asks what else is affected. Every finding is labelled by how sure we are: verified from data, rule-based from engineering rules, or speculative." | `vcm impact v1.0 v1.1 \| sed -n 1,36p` | Verified section, then the R001 power-budget finding under Rule-based, with evidence |
 | 0:38–0:50 | "Releases are hash-pinned, and each physical node is registered against one. So the question becomes: which units are affected?" | `vcm device affected --component GPU0 --value "NVIDIA A100 PCIe 40GB"` | Named units and racks |
 | 0:50–0:60 | "Corrupt one byte and verification fails. Local-first, no network, Apache-2.0." | `vcm release verify R1.1` (pass), then tamper and re-run (fail) | Red failure on tampered blob |
 

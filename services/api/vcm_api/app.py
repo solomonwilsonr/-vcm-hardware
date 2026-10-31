@@ -152,6 +152,26 @@ def create_app(repo_path: str | None = None, insecure: bool | None = None) -> Fa
         request.state.identity = who
         return await call_next(request)
 
+    # The dashboard is a static bundle that fetches nothing off this origin, so a strict policy
+    # costs nothing: no third-party script or frame can run in it, and it cannot be framed.
+    # style-src keeps 'unsafe-inline' because the dashboard sets inline style attributes.
+    _SECURITY_HEADERS = {
+        "Content-Security-Policy": (
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; "
+            "frame-ancestors 'none'"),
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "no-referrer",
+    }
+
+    @app.middleware("http")
+    async def _security_headers(request: Request, call_next):
+        response = await call_next(request)
+        for k, v in _SECURITY_HEADERS.items():
+            response.headers.setdefault(k, v)
+        return response
+
     def actor(request: Request, claimed: str) -> str:
         """The authenticated user; a self-asserted name only in insecure mode."""
         who = request.state.identity
@@ -165,6 +185,12 @@ def create_app(repo_path: str | None = None, insecure: bool | None = None) -> Fa
     @app.exception_handler(KeyError)
     async def _key_error(_: Request, exc: KeyError):
         return JSONResponse({"detail": str(exc.args[0])}, status_code=404)
+
+    @app.exception_handler(RecursionError)
+    async def _too_deep(_: Request, exc: RecursionError):
+        # a body nested thousands of levels deep exhausts the JSON parser; that is the client's
+        # fault, not a server fault
+        return JSONResponse({"detail": "request body is nested too deeply"}, status_code=400)
 
     @app.get("/api/health")
     def health():

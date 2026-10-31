@@ -161,3 +161,18 @@ def test_confidence_classes_and_evidence_survive_the_domain_change(node_repo):
 def test_no_findings_when_nothing_changed(node_repo):
     rep = analyze(node_repo, "v1.1", "v1.1")
     assert not [f for f in rep["findings"] if f["confidence_class"] == "rule_based"]
+
+
+@pytest.mark.parametrize("text,where", [
+    ('{"schema":"vcm-node/1","components":[null]}', "components[0]"),
+    ('{"schema":"vcm-node/1","components":{"a":1}}', "components must be a list"),
+    ('{"schema":"vcm-node/1","power":[]}', "power must be an object"),
+    ('{"schema":"vcm-node/1","power":{"domains":5}}', "power.domains"),
+    ('{"schema":"vcm-node/1","components":[{"ref":"X","connections":[1]}]}', "connections"),
+])
+def test_malformed_manifest_shape_is_a_clear_error(text, where):
+    """Fuzzing found raw AttributeError/TypeError on valid JSON of the wrong shape."""
+    from vcm_parsers import parse_node
+    with pytest.raises(ValueError, match="node manifest") as e:
+        parse_node(text)
+    assert where in str(e.value)

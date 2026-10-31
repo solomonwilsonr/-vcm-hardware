@@ -30,10 +30,15 @@ class RecordError(ValueError):
 SHARED_KINDS = ("devices", "racks")
 
 
+MAX_NAME = 128
+
+
 def check_name(kind: str, name: str) -> str:
     """Reject names that would escape the records directory or break a row id."""
     if not name or name.startswith(".") or any(c in name for c in "/\\\0"):
         raise RecordError(f"invalid {kind[:-1]} name: {name!r}")
+    if len(name) > MAX_NAME:  # also keeps ``<name>.json`` inside the filesystem's 255-byte limit
+        raise RecordError(f"{kind[:-1]} name is too long ({len(name)} > {MAX_NAME} characters)")
     return name
 
 

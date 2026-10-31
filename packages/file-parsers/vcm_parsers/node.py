@@ -45,6 +45,13 @@ def looks_like_node(text: str) -> bool:
     return isinstance(data, dict) and str(data.get("schema", "")).startswith("vcm-node/")
 
 
+def _object(value, where: str) -> dict:
+    """A JSON object, or a ValueError that says where the manifest has the wrong shape."""
+    if not isinstance(value, dict):
+        raise ValueError(f"node manifest: {where} must be an object, not {type(value).__name__}")
+    return value
+
+
 def parse_node(text: str) -> tuple[list[Component], set[str], list[str], dict]:
     """Return ``(components, declared_domains, duplicate_refs, meta)`` for one node manifest."""
     data = json.loads(text)
@@ -53,9 +60,14 @@ def parse_node(text: str) -> tuple[list[Component], set[str], list[str], dict]:
     comps: list[Component] = []
     seen: set[str] = set()
     dups: list[str] = []
-    domains: set[str] = set(data.get("power", {}).get("domains", {}))
+    power = _object(data.get("power", {}), "power")
+    domains: set[str] = set(_object(power.get("domains", {}), "power.domains"))
+    entries = data.get("components", [])
+    if not isinstance(entries, list):
+        raise ValueError("node manifest: components must be a list")
 
-    for entry in data.get("components", []):
+    for i, entry in enumerate(entries):
+        entry = _object(entry, f"components[{i}]")
         ref = str(entry.get("ref", "")).strip()
         if not ref:
             continue
@@ -63,7 +75,8 @@ def parse_node(text: str) -> tuple[list[Component], set[str], list[str], dict]:
             dups.append(ref)
             continue
         seen.add(ref)
-        connections = {str(k): str(v) for k, v in (entry.get("connections") or {}).items() if v}
+        conns = _object(entry.get("connections") or {}, f"components[{i}].connections")
+        connections = {str(k): str(v) for k, v in conns.items() if v}
         domains |= set(connections.values())
         slot, form = str(entry.get("slot", "")), str(entry.get("form_factor", ""))
         props = {str(k): str(v) for k, v in entry.items() if k not in _RESERVED}

@@ -180,3 +180,31 @@ def test_dashboard_has_an_agents_page_that_cannot_propose(client):
     assert '"/approve"' in js or '"approve"' in js
     # nothing in the dashboard posts a new proposal
     assert 'api("/api/proposals", {' not in js and "/api/proposals\", { json" not in js
+
+
+def test_overlong_path_parameters_are_client_errors(client):
+    """Fuzzing found a 500 on a 5000-character name; every lookup route must answer 4xx."""
+    long = "a" * 5000
+    for path in (f"/api/revisions/{long}", f"/api/validation/{long}", f"/api/releases/{long}",
+                 f"/api/releases/{long}/verify", f"/api/devices/{long}/passport"):
+        r = client.get(path)
+        assert 400 <= r.status_code < 500, (path[:30], r.status_code)
+
+
+def test_deeply_nested_json_is_a_client_error(client):
+    """Fuzzing found a 500 on a body nested 2000 levels deep."""
+    body = b'{"a":' + b"[" * 2000 + b"]" * 2000 + b"}"
+    for path in ("/api/releases", "/api/devices", "/api/prs"):
+        r = client.post(path, content=body, headers={"content-type": "application/json"})
+        assert 400 <= r.status_code < 500, (path, r.status_code)
+
+
+def test_security_headers_on_every_kind_of_response(client):
+    """The dashboard, the API, an error and a static file all carry the headers."""
+    for path in ("/", "/api/health", "/api/revisions/nope", "/static/app.js", "/no/such/page"):
+        h = client.get(path).headers
+        assert "default-src 'self'" in h["content-security-policy"], path
+        assert "frame-ancestors 'none'" in h["content-security-policy"], path
+        assert h["x-content-type-options"] == "nosniff", path
+        assert h["x-frame-options"] == "DENY", path
+    assert "http" not in client.get("/").headers["content-security-policy"]

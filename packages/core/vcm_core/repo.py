@@ -131,9 +131,12 @@ class Repository:
                 raise VcmError("no commits yet")
             return rid
         for kind in ("heads", "tags"):
-            p = self._ref_path(kind, base)
-            if p.is_file():
-                return p.read_text().strip()
+            try:
+                p = self._ref_path(kind, base)
+                if p.is_file():
+                    return p.read_text().strip()
+            except OSError:  # e.g. a name too long for the filesystem: it is simply not a ref
+                continue
         if len(base) >= 4 and all(c in "0123456789abcdef" for c in base):
             hits = [d for d in self.store.iter_digests() if d.startswith(base)
                     and self._is_revision(d)]

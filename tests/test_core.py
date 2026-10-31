@@ -102,3 +102,16 @@ def test_record_names_cannot_escape(repo):
             repo.load_record("releases", bad)
     repo.save_record("releases", "ok", {"name": "ok"})
     assert repo.load_record("releases", "ok") == {"name": "ok"}
+
+
+def test_overlong_names_are_rejected_not_crashed(repo):
+    """A name the filesystem cannot hold is 'not found' / 'invalid', never an OSError."""
+    from vcm_core.records import MAX_NAME, RecordError, check_name
+    long = "a" * 5000
+    with pytest.raises(VcmError, match="unknown revision"):
+        repo.resolve(long)
+    with pytest.raises(RecordError, match="too long"):
+        check_name("releases", "r" * (MAX_NAME + 1))
+    assert check_name("releases", "r" * MAX_NAME)  # the limit itself is allowed
+    with pytest.raises(VcmError, match="too long"):   # load_record wraps RecordError
+        repo.load_record("releases", long)

@@ -67,3 +67,20 @@ bash examples/demo-fleet.sh   # two checkouts, one shared fleet
 5. **(1:10)** Show the guardrail: an agent can only propose, a named person approves. Then the
    tamper check at the end of `make demo`, which fails as expected.
 6. **(1:25)** "Offline by default, signed releases, honest about what is not built yet."
+
+## On your own environment (fastest path)
+
+```bash
+cp .env.example .env     # fill in the four VCM_APPWRITE_* values (comments inside explain each)
+make hackathon           # checks credentials, provisions, pushes the graph, runs the shared-fleet demo
+```
+
+It stops at the first problem and says what to fix. Then screenshot the `vcm_devices`,
+`vcm_nodes` and `vcm_edges` tables in the Appwrite console for the video.
+
+## Submission checklist (due Oct 31, 11:59 PM PT)
+
+- [ ] Repository is **public**
+- [ ] `make hackathon` ran clean against your Appwrite project
+- [ ] Demo video recorded (script above, about 90 seconds) and uploaded
+- [ ] Repo URL and video URL added on the hackathon dashboard

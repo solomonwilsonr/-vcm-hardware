@@ -179,3 +179,16 @@ def test_cli_inventory_import_and_manifest(tmp_path, capsys):
     draft = tmp_path / "node.json"
     assert main(["inventory", "manifest", "--observed", str(out), "--out", str(draft)]) == 0
     assert json.loads(draft.read_text())["node"] == "gpu-node-01"
+
+
+def test_redfish_capture_of_the_wrong_shape_is_a_clear_error():
+    """A string where a nested object belongs used to surface as a raw AttributeError."""
+    import pytest
+
+    from vcm_parsers import parse_redfish
+    bad = {"/redfish/v1/Systems/1/Processors/1": {
+        "@odata.type": "#Processor.v1_10_0.Processor", "Status": "oops", "Model": "X"}}
+    with pytest.raises(ValueError, match="redfish capture") as e:
+        parse_redfish(bad)
+    assert "doctor" in str(e.value)
+    assert isinstance(parse_redfish({"resources": {}}), dict)   # an empty capture still parses

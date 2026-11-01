@@ -246,8 +246,25 @@
       h("div", { class: "body" + (o.flush ? " flush" : "") }, body));
   }
 
+  // Plain-language hover text for the numbers, so a first-time reader is never left guessing.
+  const STAT_HINTS = {
+    "components changed": "Parts that were replaced or had a value changed between the two revisions.",
+    "form factors": "Parts whose slot or form factor changed. This usually means physical rework.",
+    "repositioned": "Parts that moved to a different position.",
+    "line items": "Quantity changes: the same part, more or fewer of it.",
+    "connections": "Power domains, PCIe roots or fabrics that were added, removed or changed.",
+    "files": "Pinned files (firmware, docs, inventory) that were added, removed or modified.",
+    "findings": "Everything the impact analysis reported, across all severities.",
+    "critical": "Problems to fix before this change is rolled out.",
+    "catalog values checked": "Catalog values a named person has verified against a datasheet.",
+    "catalog": "Share of the changed parts that the component catalog knows about.",
+    "validation": "Built-in checks, before and after the change."
+  };
+
   function stat(n, label, tone) {
-    return h("div", { class: "stat" + (n === 0 || n === "0" ? " zero" : "") },
+    const hint = STAT_HINTS[label];
+    return h("div", Object.assign({ class: "stat" + (n === 0 || n === "0" ? " zero" : "") },
+        hint ? { title: hint } : {}),
       h("div", { class: "n" + (tone ? " " + tone : "") }, n),
       h("div", { class: "l" }, label));
   }
@@ -267,10 +284,28 @@
   const loading = (what) => h("p", { class: "loading" }, what || "Loading");
   const empty = (txt) => h("p", { class: "empty" }, txt);
 
+  /* Line-art for empty states: a picture of the thing that is missing, then what to do about it.
+     Decorative, so hidden from assistive technology; the text carries the meaning. */
+  const ART = {
+    release: ["M20 24l40-18 40 18v34l-40 18-40-18z", "M20 24l40 18 40-18M60 42v34", "M40 15l40 18"],
+    review: ["M30 14v52", "M30 30h38a14 14 0 0114 14v6", "M30 66h38", "M30 14m-6 0a6 6 0 1012 0 6 6 0 10-12 0",
+      "M30 66m-6 0a6 6 0 1012 0 6 6 0 10-12 0", "M82 50m-6 0a6 6 0 1012 0 6 6 0 10-12 0"],
+    agent: ["M26 8h46l18 18v46H26z", "M72 8v18h18", "M38 38h38M38 50h38M38 62h22", "M84 66m-12 0a12 12 0 1024 0 12 12 0 10-24 0",
+      "M78 66l5 5 9-10"],
+    rack: ["M28 6h64v20H28zM28 30h64v20H28zM28 54h64v20H28z", "M36 16h.01M36 40h.01M36 64h.01",
+      "M48 16h28M48 40h28M48 64h28", "M22 78h76"],
+  };
+  function emptyArt(kind, txt) {
+    const svg = s("svg", { class: "emptyart-svg", viewBox: "0 0 120 80", "aria-hidden": "true" },
+      (ART[kind] || []).map((d) => s("path", { d: d, pathLength: 1 })));
+    return h("div", { class: "emptyart" }, svg, h("p", { class: "empty" }, txt));
+  }
+
   function table(headers, rows) {
     return h("div", { class: "scroll" },
       h("table", { class: "data" },
-        h("thead", {}, h("tr", {}, headers.map((x) => h("th", {}, x)))),
+        h("thead", {}, h("tr", {}, headers.map((x) =>
+          h("th", {}, x === "" ? h("span", { class: "sr" }, "Actions") : x)))),
         h("tbody", {}, rows)));
   }
 
@@ -899,7 +934,8 @@
   function fleetPanel(ref, fleet) {
     if (!fleet.length) {
       return panel("Built units carrying " + ref, { count: 0 },
-        empty("No registered device records include " + ref + "."));
+        emptyArt("rack", "No registered unit carries " + ref + " yet. Register one against a release with " +
+          "`vcm device register SERIAL --release NAME`, then trace again."));
     }
     const groups = new Map();
     for (const d of fleet) {
@@ -1074,7 +1110,9 @@
       const rels = await api("/api/releases");
       const units = {};
       S.devices.forEach((d) => { units[d.release] = (units[d.release] || 0) + 1; });
-      clear(out).append(panel("Releases", { count: rels.length, flush: true },
+      clear(out).append(panel("Releases", { count: rels.length, flush: !!rels.length },
+        !rels.length ? emptyArt("release", "No releases yet. Pin a revision with " +
+          "`vcm release create NAME --rev REV`, and it will appear here to verify and roll back.") :
         table(["Name", "Revision", "Created", "Validation", "manifest sha256", "Units", ""],
           rels.map((r) => h("tr", {},
             h("td", { class: "m" }, r.name),
@@ -1171,7 +1209,7 @@
       const p = await api("/api/rollback?target=" + encodeURIComponent(tgt) +
         "&current=" + encodeURIComponent(cur));
       const bucket = (cls, title, items) => h("div", { class: "bucket " + cls },
-        h("h4", {}, title + " · " + items.length),
+        h("h3", {}, title + " · " + items.length),
         items.length
           ? h("ul", {}, items.map((i) => h("li", {},
               h("b", { class: "mono" }, i.ref + " "), i.instruction)))
@@ -1205,6 +1243,442 @@
     }
   }
 
+
+  /* --------------------------------------------------------------- agents */
+
+  /* Agents propose; people decide. This page only *shows* proposals and forwards a person's
+     decision to the API, which refuses an agent, the proposer, and any unauthenticated caller.
+     Everything an agent wrote (rationale, arguments) is rendered as text, never as markup. */
+
+  const MCP_SNIPPET = '{"mcpServers": {"vcm": {"command": "vcm", "args": ["-C", "/path/to/repo", "mcp"]}}}';
+
+  function agentsView(main) {
+    const out = h("div", { id: "ag-out" }, loading("Loading proposals"));
+    const filter = select("ag-filter", [
+      { value: "pending", label: "Pending" }, { value: "", label: "All" },
+      { value: "approved", label: "Approved" }, { value: "rejected", label: "Rejected" },
+    ], "pending", () => loadProposals());
+    filter.setAttribute("aria-label", "Filter proposals by status");
+    mount(main,
+      h("div", { class: "view-head" },
+        h("h1", {}, "Agents"),
+        h("p", {}, "An AI agent can read everything VCM knows and can only propose a change. " +
+          "Nothing below happens until a named person approves it here. An agent can never " +
+          "approve or reject, and nobody can decide their own proposal.")),
+      out);
+    S.ui.agOut = out;
+    S.ui.agFilter = filter;
+    loadProposals();
+  }
+
+  async function loadProposals() {
+    const out = S.ui.agOut;
+    try {
+      const all = await api("/api/proposals");
+      const want = S.ui.agFilter.value;
+      const shown = all.filter((p) => !want || p.status === want)
+        .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+      const n = (st) => all.filter((p) => p.status === st).length;
+      clear(out).append(
+        h("div", { class: "stats" },
+          stat(n("pending"), "pending", n("pending") ? "bad" : null),
+          stat(n("approved"), "approved"),
+          stat(n("rejected"), "rejected")),
+        panel("Proposals", { count: shown.length, extra: S.ui.agFilter },
+          shown.length
+            ? h("div", {}, shown.map(proposalCard))
+            : all.length
+              ? empty("Nothing with that status.")
+              : emptyArt("agent", "No proposals yet. When an agent connected over MCP asks for a " +
+                  "change, it appears here with its reason, for a person to decide.")),
+        panel("Connect an agent", {},
+          h("p", { class: "empty", style: "margin:0 0 10px" },
+            "VCM serves an MCP server over stdio. It is offline, needs no API key and opens no " +
+            "sockets. Add it to your MCP client's config, for example `.mcp.json`:"),
+          h("pre", { class: "mono", style: "margin:0;overflow-x:auto" }, MCP_SNIPPET),
+          h("p", { class: "empty", style: "margin:10px 0 0" },
+            "Read tools cannot change anything. The only write is a proposal. Signing, catalog " +
+            "reviews, policy overrides and pushing are not available to an agent at all. Not yet " +
+            "driven by a live agent client: it has been tested over the protocol only.")));
+    } catch (e) {
+      clear(out).append(errBox(e));
+    }
+  }
+
+  function proposalCard(p) {
+    const isAgent = String(p.proposer || "").startsWith("agent:");
+    const reason = h("input", { type: "text", placeholder: "reason (optional)",
+      "aria-label": "Reason for rejecting " + p.id, style: "min-width:200px" });
+    const msg = h("p", { class: "err", style: "margin:8px 0 0", hidden: true });
+    const decide = async (what, btn) => {
+      btn.disabled = true; msg.hidden = true;
+      try {
+        await api("/api/proposals/" + p.id + "/" + what,
+          { json: what === "reject" ? { reason: reason.value.trim() } : {} });
+        loadProposals();
+      } catch (err) {
+        msg.textContent = err.message; msg.hidden = false; btn.disabled = false;
+      }
+    };
+    const args = Object.keys(p.args || {}).sort().map((k) => {
+      const v = String(p.args[k]);
+      return h("span", { class: "mono", title: v, style: "margin-right:14px;display:inline-block" },
+        k + "=" + (/^[0-9a-f]{40,}$/.test(v) ? shortHash(v, 12) : v));
+    });
+    const pending = p.status === "pending";
+    return h("div", { class: "proposal", style: "padding:14px 0;border-top:1px solid var(--line)" },
+      h("div", { class: "vmeta", style: "display:flex;gap:10px;flex-wrap:wrap;align-items:center" },
+        h("b", { class: "mono" }, p.id),
+        h("span", { class: "mono", style: "border:1px solid var(--line-2);border-radius:999px;" +
+          "padding:2px 10px;font-size:11px;letter-spacing:.06em;text-transform:uppercase" },
+          p.status),
+        h("span", { class: "mono" }, p.action),
+        h("span", { class: "count mono", title: p.proposer },
+          (isAgent ? "agent " : "") + "proposed by " + p.proposer + " · " + when(p.created_at))),
+      h("div", { style: "margin:6px 0" }, p.summary),
+      h("blockquote", { style: "margin:6px 0;padding-left:12px;border-left:2px solid var(--line-2);" +
+        "color:var(--fg-dim)" }, p.rationale),
+      h("div", {}, args),
+      !pending
+        ? h("p", { class: "empty", style: "margin:8px 0 0" },
+            p.status + " by " + (p.decided_by || "?") + " · " + when(p.decided_at) +
+            (p.reason ? " · " + p.reason : ""))
+        : h("div", { class: "toolbar", style: "margin-top:10px" },
+            h("button", { class: "primary", type: "button",
+              onclick: (e) => decide("approve", e.target) }, "Approve"),
+            reason,
+            h("button", { type: "button", onclick: (e) => decide("reject", e.target) }, "Reject")),
+      msg);
+  }
+
+
+  /* ---------------------------------------------------------------- setup */
+
+  /* A map of every device in a configuration and how it connects, drawn from /api/topology.
+     "Live" means this page re-reads the repository every few seconds and shows what changed; it is
+     not telemetry. Machine data appears only where a capture was attached (`vcm drift --attach`),
+     and the page says so. Everything from the repository is rendered as text, never as markup. */
+
+  const TYPE_ORDER = ["cpu", "gpu", "dimm", "nic", "nvme", "psu"];
+  const KIND_ORDER = ["power", "pcie", "memory", "fabric", "other"];
+  const STATUS_TEXT = {
+    drift: "differs from the machine", matches: "matches the machine",
+    unchecked: "not covered by the capture", unobserved: "no machine capture attached" };
+  const POLL_MS = 5000;
+
+  function setupView(main) {
+    const st = { rev: "HEAD", data: null, sel: null, paused: false, timer: null, tick: null,
+      okAt: 0, down: false, log: [], flash: new Set() };
+    const live = h("div", { class: "livebar", role: "status", "aria-live": "polite" });
+    const revSel = select("su-rev", (S.revs || []).map((r) => ({
+      value: r.id, label: shortHash(r.id, 8) + (r.tags && r.tags.length ? " [" + r.tags[0] + "]" : "") +
+        " " + (r.message || "") })), S.revs && S.revs[0] ? S.revs[0].id : "HEAD", (e) => {
+      st.rev = e.target.value; st.sel = null; st.data = null; st.log = []; refresh(true); });
+    revSel.setAttribute("aria-label", "Revision to show");
+    const pauseBtn = h("button", { type: "button", class: "ghost", onclick: () => {
+      st.paused = !st.paused; pauseBtn.textContent = st.paused ? "Resume" : "Pause"; paintLive(); } }, "Pause");
+    const body = h("div", { id: "su-body" }, loading("Loading the setup"));
+    mount(main,
+      h("div", { class: "view-head" },
+        h("h1", {}, "Setup"),
+        h("p", {}, "Every device in this configuration and how it connects, drawn from the repository " +
+          "you are in. The page re-reads it every few seconds, so a new commit, an attached machine " +
+          "capture or a newly registered unit shows up without a reload.")),
+      h("div", { class: "livewrap" }, live, h("div", { class: "toolbar" }, revSel, pauseBtn)),
+      body);
+    st.rev = S.revs && S.revs[0] ? S.revs[0].id : "HEAD";
+
+    function paintLive() {
+      const ago = st.okAt ? Math.max(0, Math.round((Date.now() - st.okAt) / 1000)) : null;
+      clear(live).append(
+        h("span", { class: "dot " + (st.down ? "down" : st.paused ? "idle" : "up") }),
+        h("span", {}, st.down ? "connection lost, retrying" : st.paused ? "paused"
+          : "live, re-reading every " + POLL_MS / 1000 + "s"),
+        ago !== null ? h("span", { class: "count mono" }, "updated " + (ago < 2 ? "just now" : ago + "s ago")) : null,
+        st.data ? h("span", { class: "count mono", title: st.data.revision.message },
+          "revision " + st.data.revision.short + (st.data.revision.tags.length ? " [" + st.data.revision.tags.join(" ") + "]" : "")) : null);
+    }
+
+    function diff(a, b) {
+      const out = [], flash = new Set();
+      if (a.revision.id !== b.revision.id) out.push("revision changed to " + b.revision.short);
+      const A = new Map(a.components.map((c) => [c.ref, c])), B = new Map(b.components.map((c) => [c.ref, c]));
+      B.forEach((c, r) => { if (!A.has(r)) { out.push("+ " + r + " added"); flash.add(r); }
+        else if (A.get(r).status !== c.status) { out.push(r + ": " + STATUS_TEXT[c.status]); flash.add(r); } });
+      A.forEach((c, r) => { if (!B.has(r)) out.push("- " + r + " removed"); });
+      const dA = new Map(a.devices.map((d) => [d.serial, d])), dB = new Map(b.devices.map((d) => [d.serial, d]));
+      dB.forEach((d, k) => { if (!dA.has(k)) out.push("+ unit " + k + " registered");
+        else if (dA.get(k).rack !== d.rack || dA.get(k).position !== d.position)
+          out.push("unit " + k + " moved to " + (d.rack ? d.rack + (d.position ? " U" + d.position : "") : "unplaced")); });
+      dA.forEach((d, k) => { if (!dB.has(k)) out.push("- unit " + k + " removed"); });
+      if (!a.observed && b.observed) out.push("machine capture attached (" + b.observed.sources.join(", ") + ")");
+      else if (a.observed && b.observed && a.observed.captured_at !== b.observed.captured_at)
+        out.push("machine capture refreshed");
+      if (JSON.stringify(a.racks) !== JSON.stringify(b.racks) && !out.some((x) => x.includes("moved")))
+        out.push("racks changed");
+      return { out, flash };
+    }
+
+    async function refresh(initial) {
+      try {
+        const next = await api("/api/topology?rev=" + encodeURIComponent(st.rev));
+        st.down = false; st.okAt = Date.now();
+        if (!st.data) { st.data = next; st.flash = new Set(); render(); }
+        else if (st.data.fingerprint !== next.fingerprint) {
+          const d = diff(st.data, next);
+          d.out.forEach((t) => st.log.unshift({ at: new Date(), text: t }));
+          st.log = st.log.slice(0, 12); st.flash = d.flash; st.data = next; render();
+        }
+      } catch (e) {
+        st.down = true;
+        if (!st.data) clear(body).append(errBox(e));
+      }
+      paintLive();
+    }
+
+    function render() {
+      const d = st.data;
+      if (!d.components.length) {
+        clear(body).append(emptyArt("rack", "This revision has no components yet. Commit a node " +
+          "manifest (a `*.node.json` file) and it is drawn here."));
+        return;
+      }
+      const obs = d.observed;
+      const drift = d.counts.drift;
+      clear(body).append(
+        h("div", { class: "stats" },
+          stat(d.counts.components, "components"),
+          stat(d.domains.length, "shared domains"),
+          stat(d.devices.length, "units"),
+          stat(d.racks.length, "racks"),
+          stat(obs ? drift : "n/a", "differ from machine", drift ? "bad" : null),
+          stat(obs ? obs.sources.join(" + ") : "none", "machine data", "txt")),
+        panel("Topology", { count: d.node.name || undefined,
+            extra: h("span", { class: "count" }, d.node.chassis && d.node.chassis.model
+              ? d.node.chassis.model + " · " + d.node.chassis.rack_units + "U" : "") },
+          h("div", { class: "topo-wrap" }, topologyMap(d, st, render),
+            h("div", { class: "topo-legend" },
+              ["matches", "drift", "unchecked", "unobserved"].map((k) =>
+                h("span", {}, h("i", { class: "lg " + k }), STATUS_TEXT[k])),
+              h("span", { class: "hint" }, "Hover or select a part to draw its connections. Select a " +
+                "domain to see everything on it.")))),
+        h("div", { class: "grid-halves" },
+          setupDetailPanel(d, st),
+          h("div", {},
+            setupChangesPanel(st),
+            setupMachinePanel(d))),
+        setupFleetPanel(d));
+      // flash what just changed
+      st.flash.forEach((r) => { const el = body.querySelector('[data-ref="' + CSS.escape(r) + '"]');
+        if (el) el.classList.add("flash"); });
+    }
+
+    st.rerender = () => render();
+    S.ui.stop = () => { clearInterval(st.timer); clearInterval(st.tick);
+      document.removeEventListener("visibilitychange", onVis); };
+    function onVis() { if (!document.hidden) refresh(); }
+    document.addEventListener("visibilitychange", onVis);
+    st.timer = setInterval(() => { if (!st.paused && !document.hidden) refresh(); }, POLL_MS);
+    st.tick = setInterval(paintLive, 1000);
+    paintLive();
+    refresh(true);
+  }
+
+  function topologyMap(d, st, rerender) {
+    const rows = [], comps = d.components;
+    const types = TYPE_ORDER.filter((t) => comps.some((c) => c.type === t))
+      .concat([...new Set(comps.map((c) => c.type))].filter((t) => !TYPE_ORDER.includes(t)).sort());
+    const TW = 56, TH = 40, GAP = 10, X0 = 92, PER = 9, ROWGAP = 26;
+    let y = 14;
+    types.forEach((t) => {
+      const items = comps.filter((c) => c.type === t), lines = Math.ceil(items.length / PER);
+      rows.push({ type: t, y, items, lines });
+      y += lines * (TH + GAP) + ROWGAP;
+    });
+    const doms = d.domains.slice().sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) ||
+      a.name.localeCompare(b.name));
+    const HX = 790, HW = 200, HH = 38, HGAP = 14;
+    const hubH = doms.length * (HH + HGAP);
+    const height = Math.max(y, hubH + 28);
+    const hubY = new Map(doms.map((dm, i) => [dm.name, 14 + i * (HH + HGAP) + Math.max(0, (height - 28 - hubH) / 2)]));
+    const pos = new Map();
+    rows.forEach((r) => r.items.forEach((c, i) => pos.set(c.ref, {
+      x: X0 + (i % PER) * (TW + GAP), y: r.y + Math.floor(i / PER) * (TH + GAP) })));
+
+    const edges = s("g", { class: "edges" });
+    const tileEls = new Map(), hubEls = new Map();
+    const svg = s("svg", { class: "topo", viewBox: "0 0 1000 " + height, role: "group",
+      "aria-label": "Topology of " + (d.node.name || "the node") + ": " + comps.length + " components on " +
+        doms.length + " shared domains" });
+
+    function show(refs, domainNames) {      // refs: components lit; domainNames: hubs lit
+      clear(edges);
+      tileEls.forEach((el, r) => el.classList.toggle("dim", refs.size > 0 && !refs.has(r)));
+      hubEls.forEach((el, n) => el.classList.toggle("dim", refs.size > 0 && !domainNames.has(n)));
+      refs.forEach((r) => {
+        const c = comps.find((x) => x.ref === r), p = pos.get(r);
+        Object.keys(c.connections).forEach((port) => {
+          const dn = c.connections[port]; if (!hubY.has(dn) || (domainNames.size && !domainNames.has(dn))) return;
+          const x1 = p.x + TW, y1 = p.y + TH / 2, x2 = HX, y2 = hubY.get(dn) + HH / 2;
+          const dm = doms.find((q) => q.name === dn);
+          edges.append(s("path", { class: "edge " + (dm ? dm.kind : "other"), pathLength: 1,
+            d: "M" + x1 + " " + y1 + " C " + (x1 + 120) + " " + y1 + ", " + (x2 - 140) + " " + y2 + ", " + x2 + " " + y2 }));
+        });
+      });
+    }
+    const idle = () => { if (st.sel) { selectionLight(); } else show(new Set(), new Set()); };
+    function selectionLight() {
+      const sel = st.sel;
+      if (sel.kind === "part") {
+        const c = comps.find((x) => x.ref === sel.id); if (!c) return show(new Set(), new Set());
+        show(new Set([sel.id]), new Set(Object.values(c.connections)));
+      } else {
+        const dm = doms.find((x) => x.name === sel.id); if (!dm) return show(new Set(), new Set());
+        show(new Set(dm.members), new Set([sel.id]));
+      }
+    }
+    const choose = (kind, id) => {
+      st.sel = st.sel && st.sel.kind === kind && st.sel.id === id ? null : { kind: kind, id: id };
+      rerender();
+    };
+
+    rows.forEach((r) => {
+      svg.append(s("text", { class: "rowlabel", x: 0, y: r.y + 24 }, r.type.toUpperCase()),
+        s("text", { class: "rowcount", x: 0, y: r.y + 38 }, "×" + r.items.length));
+    });
+    comps.forEach((c) => {
+      const p = pos.get(c.ref);
+      const selected = st.sel && st.sel.kind === "part" && st.sel.id === c.ref;
+      const g = s("g", { class: "tile " + c.status + (selected ? " sel" : ""), "data-ref": c.ref,
+        transform: "translate(" + p.x + " " + p.y + ")", tabindex: "0", role: "button",
+        "aria-pressed": selected ? "true" : "false",
+        "aria-label": c.ref + ", " + (c.model || c.type) + ", " + STATUS_TEXT[c.status] },
+        s("title", {}, c.ref + " · " + (c.model || c.type) + " · " + STATUS_TEXT[c.status]),
+        s("rect", { width: TW, height: TH, rx: 7 }),
+        s("text", { class: "ref", x: TW / 2, y: 17, "text-anchor": "middle" }, c.ref),
+        s("text", { class: "sub", x: TW / 2, y: 31, "text-anchor": "middle" },
+          c.measured_w != null ? Math.round(c.measured_w) + "W" : String(c.slot || "").split("_").pop().slice(0, 8)),
+        c.status === "drift" ? s("text", { class: "mark", x: TW - 6, y: 12, "text-anchor": "end" }, "!") : null,
+        c.status === "matches" ? s("path", { class: "tick", d: "M" + (TW - 14) + " 9l3 3 5-6" }) : null);
+      g.addEventListener("mouseenter", () => { const o = Object.values(c.connections);
+        show(new Set([c.ref]), new Set(o)); });
+      g.addEventListener("mouseleave", idle);
+      g.addEventListener("focus", () => show(new Set([c.ref]), new Set(Object.values(c.connections))));
+      g.addEventListener("blur", idle);
+      g.addEventListener("click", () => choose("part", c.ref));
+      g.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose("part", c.ref); } });
+      tileEls.set(c.ref, g); svg.append(g);
+    });
+    doms.forEach((dm) => {
+      const selected = st.sel && st.sel.kind === "domain" && st.sel.id === dm.name;
+      const g = s("g", { class: "hub " + dm.kind + (selected ? " sel" : ""), transform: "translate(" + HX + " " + hubY.get(dm.name) + ")",
+        tabindex: "0", role: "button", "aria-pressed": selected ? "true" : "false",
+        "aria-label": dm.name + ", " + dm.kind + " domain, " + dm.members.length + " parts" },
+        s("title", {}, dm.name + " · " + dm.kind + " · " + dm.members.length + " parts"),
+        s("rect", { width: HW, height: HH, rx: 8 }),
+        s("text", { class: "hname", x: 12, y: 16 }, dm.name),
+        s("text", { class: "hsub", x: 12, y: 30 }, dm.kind + " · " + dm.members.length + " parts" +
+          (dm.declared && dm.declared.redundancy ? " · " + dm.declared.redundancy : "")));
+      g.addEventListener("mouseenter", () => show(new Set(dm.members), new Set([dm.name])));
+      g.addEventListener("mouseleave", idle);
+      g.addEventListener("focus", () => show(new Set(dm.members), new Set([dm.name])));
+      g.addEventListener("blur", idle);
+      g.addEventListener("click", () => choose("domain", dm.name));
+      g.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose("domain", dm.name); } });
+      hubEls.set(dm.name, g); svg.append(g);
+    });
+    svg.insertBefore(edges, svg.firstChild);
+    if (st.sel) selectionLight();
+    return svg;
+  }
+
+  function setupDetailPanel(d, st) {
+    const sel = st.sel;
+    if (!sel) return panel("Details", {}, empty("Select a part or a domain on the map to see what it is, " +
+      "what it is connected to, and what the machine says about it."));
+    if (sel.kind === "domain") {
+      const dm = d.domains.find((x) => x.name === sel.id);
+      if (!dm) return panel("Details", {}, empty("That domain is not in this revision."));
+      const decl = dm.declared || {};
+      return panel(dm.name, { count: dm.kind },
+        h("dl", { class: "kv" },
+          h("dt", {}, "Kind"), h("dd", {}, dm.kind),
+          h("dt", {}, "Parts on it"), h("dd", {}, String(dm.members.length)),
+          Object.keys(decl).filter((k) => k !== "note").map((k) => [h("dt", {}, k.replace(/_/g, " ")), h("dd", {}, String(decl[k]))])),
+        decl.note ? h("p", { class: "empty", style: "margin:8px 0 0" }, decl.note) : null,
+        h("div", { class: "chiprow" }, dm.members.map((r) => h("button", { type: "button", class: "ref",
+          onclick: () => { st.sel = { kind: "part", id: r }; st.rerender(); } }, r))));
+    }
+    const c = d.components.find((x) => x.ref === sel.id);
+    if (!c) return panel("Details", {}, empty("That part is not in this revision."));
+    const carrying = d.devices.filter((u) => u.on_revision);
+    return panel(c.ref, { count: c.type },
+      h("div", { class: "statusline " + c.status }, h("i", { class: "lg " + c.status }), STATUS_TEXT[c.status]),
+      h("dl", { class: "kv" },
+        h("dt", {}, "Model"), h("dd", {}, c.model || "—"),
+        c.mpn ? [h("dt", {}, "Part number"), h("dd", { class: "mono" }, c.mpn)] : null,
+        c.manufacturer ? [h("dt", {}, "Maker"), h("dd", {}, c.manufacturer)] : null,
+        c.slot ? [h("dt", {}, "Slot"), h("dd", { class: "mono" }, c.slot)] : null,
+        c.form_factor ? [h("dt", {}, "Form factor"), h("dd", {}, c.form_factor)] : null,
+        Object.keys(c.props).map((k) => [h("dt", {}, k.replace(/_/g, " ")), h("dd", {}, c.props[k])]),
+        c.measured_w != null ? [h("dt", {}, "Measured draw"), h("dd", {}, Math.round(c.measured_w) + " W (from the attached capture)")] : null,
+        Object.keys(c.connections).length ? [h("dt", {}, "Connected to"), h("dd", {}, Object.keys(c.connections).map((p) =>
+          h("button", { type: "button", class: "ref", title: p, onclick: () => { st.sel = { kind: "domain", id: c.connections[p] }; st.rerender(); } },
+            c.connections[p])))] : null,
+        h("dt", {}, "Carried by"), h("dd", {}, carrying.length ? plural(carrying.length, "registered unit") + " on this revision" : "no registered unit on this revision")),
+      c.findings.length ? h("div", { class: "driftlist" }, c.findings.map((f) =>
+        h("div", { class: "driftitem" }, schip(f.severity), h("span", {}, f.title)))) : null);
+  }
+
+  function setupChangesPanel(st) {
+    return panel("Recent changes", { count: st.log.length },
+      st.log.length ? h("ul", { class: "changes" }, st.log.map((e) => h("li", {},
+        h("span", { class: "mono t" }, e.at.toLocaleTimeString()), h("span", {}, e.text))))
+        : empty("Nothing has changed since you opened this page. Commit, attach a capture or register " +
+          "a unit and it appears here within a few seconds."));
+  }
+
+  function setupMachinePanel(d) {
+    const o = d.observed;
+    if (!o) return panel("Machine data", {}, empty("No machine capture is attached to this revision, so the map " +
+      "shows what is declared, not what is running. Attach one with `vcm drift --rev REV --attach " +
+      "--redfish FILE --nvidia-smi FILE`."));
+    const fw = d.node.firmware || {};
+    return panel("Machine data", { count: o.status === "drifted" ? "differs" : "in sync" },
+      h("dl", { class: "kv" },
+        h("dt", {}, "Sources"), h("dd", {}, o.sources.join(", ")),
+        h("dt", {}, "Captured"), h("dd", {}, when(o.captured_at)),
+        h("dt", {}, "Covers"), h("dd", {}, o.covers.join(", ") || "—"),
+        o.unchecked_types.length ? [h("dt", {}, "Not checked"), h("dd", {}, o.unchecked_types.join(", "))] : null,
+        o.node_power_w != null ? [h("dt", {}, "Node draw"), h("dd", {}, Math.round(o.node_power_w) + " W (last sample)")] : null,
+        Object.keys(fw).map((k) => [h("dt", {}, "declared " + k.replace(/_/g, " ")), h("dd", { class: "mono" },
+          fw[k] + (o.firmware[k] && o.firmware[k] !== fw[k] ? "  →  machine " + o.firmware[k] : ""))])),
+      o.node_findings.length ? h("div", { class: "driftlist" }, o.node_findings.map((f) =>
+        h("div", { class: "driftitem", title: f.detail }, schip(f.severity), h("span", {}, f.title)))) : null,
+      h("p", { class: "empty", style: "margin:8px 0 0" }, "A capture is a snapshot. It shows what the machine reported " +
+        "when it was taken, not what it is doing now."));
+  }
+
+  function setupFleetPanel(d) {
+    const unplaced = d.devices.filter((u) => !u.rack);
+    const unit = (u) => h("div", { class: "unit" + (u.on_revision ? "" : " old"),
+      title: u.serial + " · release " + u.release + (u.on_revision ? "" : " · built from another revision") },
+      h("b", { class: "mono" }, u.serial), h("span", {}, u.release + (u.position ? " · U" + u.position : "")),
+      u.on_revision ? null : h("em", {}, "other revision"));
+    if (!d.devices.length && !d.racks.length)
+      return panel("Fleet", {}, emptyArt("rack", "No units are registered yet. Register one against a release with " +
+        "`vcm device register SERIAL --release NAME`, and place it with `vcm fleet place SERIAL --rack RACK`."));
+    return panel("Fleet", { count: plural(d.devices.length, "unit") + " · " + plural(d.racks.length, "rack") },
+      d.racks.map((r) => h("div", { class: "rackrow" },
+        h("div", { class: "rackhead" }, h("b", {}, r.name), h("span", { class: "count mono" },
+          [r.site, r.units ? r.units + "U" : null, r.power_budget_w ? Math.round(r.power_budget_w) + " W budget" : null].filter(Boolean).join(" · "))),
+        r.placed.length ? h("div", { class: "units" }, r.placed.map((p) => unit(d.devices.find((u) => u.serial === p.serial))))
+          : h("p", { class: "empty", style: "margin:0" }, "No units placed in this rack."))),
+      unplaced.length ? h("div", { class: "rackrow" },
+        h("div", { class: "rackhead" }, h("b", {}, "Not placed"), h("span", { class: "count mono" }, "no rack recorded")),
+        h("div", { class: "units" }, unplaced.map(unit))) : null);
+  }
+
   /* --------------------------------------------------------------- review */
 
   function reviewView(main) {
@@ -1234,7 +1708,8 @@
                 h("td", { class: "num" }, p.approvals),
                 h("td", {}, h("button", { class: "ghost", type: "button",
                   onclick: () => showPr(p.id) }, "Open")))))
-          : empty("No pull requests recorded.")),
+          : emptyArt("review", "No pull requests yet. Open one with " +
+            "`vcm pr open --base REV --head REV --title TEXT`; a person then approves it here.")),
         h("div", { id: "pr-detail" }));
       if (S.review.selected) showPr(S.review.selected);
       else if (prs.length) showPr(prs[0].id);
@@ -1489,7 +1964,7 @@
       const p = await api("/api/fleet/power?" + q);
       fleetSummary(p);
       if (!p.racks.length) {
-        clear(ui.powerOut).append(empty("No racks yet. Define one with `vcm fleet rack define " +
+        clear(ui.powerOut).append(emptyArt("rack", "No racks yet. Define one with `vcm fleet rack define " +
           "NAME --budget W` and place units with `vcm fleet place`, or import placement " +
           "from NetBox with `vcm fleet netbox`."));
         return;
@@ -1536,7 +2011,7 @@
       const p = await api("/api/fleet/rollout?" + q);
       const tone = p.blocked.length || p.deferred.length ? "warning" : "clean";
       const waves = p.waves.map((w) => h("div", { class: "wave" },
-        h("h4", {}, "Wave " + w.wave, h("span", { class: "count" },
+        h("h3", {}, "Wave " + w.wave, h("span", { class: "count" },
           plural(w.units.length, "unit"))),
         h("ul", {}, w.units.map((u) => h("li", {},
           h("b", { class: "mono" }, u.serial), h("span", { class: "dim" }, "  " + u.rack))))));
@@ -1640,9 +2115,11 @@
 
   const VIEWS = {
     compare: compareView,
+    setup: setupView,
     lineage: lineageView,
     releases: releasesView,
     review: reviewView,
+    agents: agentsView,
     fleet: fleetView,
     history: historyView,
   };
@@ -1655,6 +2132,7 @@
       if (a.dataset.view === view) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
     });
+    if (S.ui && S.ui.stop) S.ui.stop();
     const main = clear(document.getElementById("main"));
     S.ui = {};
     try {
@@ -1704,7 +2182,8 @@
     mount(box,
       h("span", {}, h("span", { class: "dot " + (ok ? "up" : "down") }), " ",
         h("span", { class: "k" }, "api "), ok ? "ok" : "down"),
-      h("span", {}, h("span", { class: "k" }, "repo "), info.path),
+      h("span", { title: info.path }, h("span", { class: "k" }, "repo "),
+        String(info.path || "").replace(/\/+$/, "").split("/").pop() || info.path),
       h("span", {}, h("span", { class: "k" }, "branch "), info.branch || "detached"),
       h("span", { title: info.head }, h("span", { class: "k" }, "head "),
         shortHash(info.head, 10)),

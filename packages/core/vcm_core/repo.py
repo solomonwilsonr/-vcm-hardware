@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .audit import AuditLog
 from .categories import categorize
+from .filelock import file_lock
 from .model import Artifact, Revision, canonical_json
 from .objects import ObjectStore
 from .records import FileRecordStore, RecordError, RecordStore
@@ -131,9 +132,12 @@ class Repository:
                 raise VcmError("no commits yet")
             return rid
         for kind in ("heads", "tags"):
-            p = self._ref_path(kind, base)
-            if p.is_file():
-                return p.read_text().strip()
+            try:
+                p = self._ref_path(kind, base)
+                if p.is_file():
+                    return p.read_text().strip()
+            except OSError:  # e.g. a name too long for the filesystem: it is simply not a ref
+                continue
         if len(base) >= 4 and all(c in "0123456789abcdef" for c in base):
             hits = [d for d in self.store.iter_digests() if d.startswith(base)
                     and self._is_revision(d)]
@@ -199,6 +203,14 @@ class Repository:
 
     def commit(self, message: str, author: str | None = None,
                timestamp: str | None = None, allow_empty: bool = False) -> Revision:
+        # Reading the parent, deciding there is something to commit and moving the branch must be
+        # one step: two committers that read the same parent would otherwise each report success
+        # while the later write to the branch silently orphaned the earlier revision.
+        with file_lock(self.dir / "repo.lock"):
+            return self._commit_locked(message, author, timestamp, allow_empty)
+
+    def _commit_locked(self, message: str, author: str | None, timestamp: str | None,
+                       allow_empty: bool) -> Revision:
         parent = self.head_id()
         artifacts: dict[str, Artifact] = {}
         for rel, full in self.scan().items():

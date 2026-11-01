@@ -168,3 +168,63 @@ def test_dashboard_ships_the_fleet_view(client):
     for endpoint in ("/api/fleet/power", "/api/fleet/rollout", "/api/fleet/query"):
         assert endpoint in js
     assert "fleet: fleetView" in js
+
+
+def test_dashboard_has_an_agents_page_that_cannot_propose(client):
+    """Agents propose, people decide: the page lists proposals and forwards a decision, and the
+    dashboard has no code path that creates a proposal."""
+    page = client.get("/").text
+    js = client.get("/static/app.js").text
+    assert 'data-view="agents"' in page
+    assert "function agentsView(" in js and '"/api/proposals"' in js
+    assert '"/approve"' in js or '"approve"' in js
+    # nothing in the dashboard posts a new proposal
+    assert 'api("/api/proposals", {' not in js and "/api/proposals\", { json" not in js
+
+
+def test_overlong_path_parameters_are_client_errors(client):
+    """Fuzzing found a 500 on a 5000-character name; every lookup route must answer 4xx."""
+    long = "a" * 5000
+    for path in (f"/api/revisions/{long}", f"/api/validation/{long}", f"/api/releases/{long}",
+                 f"/api/releases/{long}/verify", f"/api/devices/{long}/passport"):
+        r = client.get(path)
+        assert 400 <= r.status_code < 500, (path[:30], r.status_code)
+
+
+def test_deeply_nested_json_is_a_client_error(client):
+    """Fuzzing found a 500 on a body nested 2000 levels deep."""
+    body = b'{"a":' + b"[" * 2000 + b"]" * 2000 + b"}"
+    for path in ("/api/releases", "/api/devices", "/api/prs"):
+        r = client.post(path, content=body, headers={"content-type": "application/json"})
+        assert 400 <= r.status_code < 500, (path, r.status_code)
+
+
+def test_security_headers_on_every_kind_of_response(client):
+    """The dashboard, the API, an error and a static file all carry the headers."""
+    for path in ("/", "/api/health", "/api/revisions/nope", "/static/app.js", "/no/such/page"):
+        h = client.get(path).headers
+        assert "default-src 'self'" in h["content-security-policy"], path
+        assert "frame-ancestors 'none'" in h["content-security-policy"], path
+        assert h["x-content-type-options"] == "nosniff", path
+        assert h["x-frame-options"] == "DENY", path
+    assert "http" not in client.get("/").headers["content-security-policy"]
+
+
+def test_dashboard_empty_states_are_illustrated_but_still_explain(client):
+    """Each empty state draws the missing thing, hides the picture from assistive technology, and
+    keeps the explanation (and the command to run) in text."""
+    js = client.get("/static/app.js").text
+    assert "function emptyArt(" in js and '"aria-hidden": "true"' in js
+    for kind in ("release", "review", "agent", "rack"):
+        assert f'emptyArt("{kind}"' in js, kind
+    assert "vcm release create" in js and "vcm pr open" in js
+
+
+def test_dashboard_script_has_no_duplicate_function_names(client):
+    """A second function with an existing name silently replaces it. The Setup page once did that
+    to the Lineage page's fleetPanel, and only a browser run noticed."""
+    import collections
+    import re
+    js = client.get("/static/app.js").text
+    names = collections.Counter(re.findall(r"^\s*(?:async\s+)?function\s+([A-Za-z0-9_$]+)\s*\(", js, re.M))
+    assert {k: v for k, v in names.items() if v > 1} == {}

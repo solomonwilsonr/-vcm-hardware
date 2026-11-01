@@ -1,4 +1,4 @@
-.PHONY: install test lint demo demo-fleet clean
+.PHONY: install test lint demo demo-fleet hackathon clean
 
 install:
 	python3 -m pip install -e ".[dev]"
@@ -14,6 +14,9 @@ demo:
 
 demo-fleet:
 	bash examples/demo-fleet.sh
+
+hackathon:
+	bash examples/hackathon-setup.sh
 
 clean:
 	rm -rf demo-workspace demo-workspace-fleet .pytest_cache .ruff_cache

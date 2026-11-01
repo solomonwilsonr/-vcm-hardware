@@ -5,41 +5,63 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>VCM &mdash; version control for datacenter hardware</title>
 <meta name="description" content="Commit a node's configuration, see what a change breaks, and trace which physical units are affected. Every finding says how much to trust it.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230d1117'/%3E%3Cpath d='M3 4l3 8 3-8' stroke='%234493f8' stroke-width='1.6' fill='none'/%3E%3Cpath d='M11 4v8' stroke='%233fb950' stroke-width='1.6'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%23141414'/%3E%3Cpath d='M3 4l3 8 3-8' stroke='%234cc472' stroke-width='1.6' fill='none'/%3E%3Cpath d='M11 4v8' stroke='%23a8e08a' stroke-width='1.6'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
+<div class="progress" aria-hidden="true"><i></i></div>
 
+<div class="announce" role="region" aria-label="Announcement"><span>New: confidence labels on every finding</span><i></i><a href="#trust">See how it works &rsaquo;</a></div>
 <header class="site">
   <div class="wrap">
-    <a class="logo" href="#top">VCM</a>
-    <nav>
+    <a class="logo" href="#top"><svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4l3 8 3-8" stroke="#4cc472" stroke-width="1.8" fill="none"/><path d="M12 4v8" stroke="#a8e08a" stroke-width="1.8"/></svg> VCM</a>
+    <nav aria-label="Primary">
       <a href="#change">What changed</a>
       <a href="#blast">Blast radius</a>
       <a href="#trust">Confidence</a>
       <a href="#fleet">Fleet</a>
+      <a href="#agents">Agents</a>
       <a href="#limits">Limitations</a>
-      <a href="https://github.com/solomonwilsonr/-vcm-hardware">GitHub</a>
     </nav>
+    <div class="navcta">
+      <a class="pill" href="https://github.com/solomonwilsonr/-vcm-hardware#readme">README</a>
+      <a class="pill solid" href="https://github.com/solomonwilsonr/-vcm-hardware">View on GitHub</a>
+    </div>
   </div>
 </header>
 
 <main id="main">
 
 <div class="hero" id="top">
-  <div class="wrap">
-    <span class="eyebrow rise"><span class="dot"></span> Open source &middot; Apache-2.0 &middot; runs offline</span>
-    <h1 class="rise" style="--d:70ms">Every hardware change has a <span class="accent">blast radius</span>.</h1>
+  <div class="wrap frame">
+    <span class="eyebrow rise">Version control for datacenter hardware</span>
+    <h1 data-split>Every hardware change has a blast&nbsp;radius.</h1>
     <p class="lede rise" style="--d:140ms">
-      VCM is version control for datacenter hardware. Commit a node's configuration the way you
-      commit code, and it tells you what the change breaks, which physical units are affected, and
-      how much to trust every single thing it says.
+      Commit a node's configuration the way you commit code. VCM tells you what the change breaks,
+      which physical units are affected, and how much to trust every single thing it says.
     </p>
     <div class="cta rise" style="--d:210ms">
-      <a class="btn primary" href="https://github.com/solomonwilsonr/-vcm-hardware">View on GitHub</a>
-      <a class="btn ghost" href="#fleet">How the fleet works</a>
-      <span class="note">no network at runtime</span>
+      <a class="pill solid big" href="https://github.com/solomonwilsonr/-vcm-hardware">View on GitHub</a>
+      <a class="pill big" href="#fleet">How the fleet works</a>
+    </div>
+    <div class="stage rise" style="--d:280ms">
+      <div class="bands" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <div class="demo" id="demo">
+        <div class="demo-cmd"><span class="dim">$</span> vcm impact v1.0 v1.1
+          <span class="dim"> &nbsp;# 8&times; A100 PCIe 40GB &rarr; 8&times; H100 NVL 94GB</span></div>
+        <div class="demo-out" id="demo-out" aria-live="polite"></div>
+        <div class="demo-chips" role="tablist" aria-label="Findings from the same change">
+          <button class="chipb on" role="tab" data-k="power">Power</button>
+          <button class="chipb" role="tab" data-k="driver">Drivers</button>
+          <button class="chipb" role="tab" data-k="conn">Connectors</button>
+          <button class="chipb" role="tab" data-k="drift">Drift</button>
+        </div>
+        <div class="demo-foot">
+          <span class="demo-note">Real findings from the bundled sample node. Offline, no network.</span>
+          <button class="pill solid" id="demo-run" type="button">&#9654; Run</button>
+        </div>
+      </div>
     </div>
     <div class="stage rise" style="--d:280ms" role="img"
          aria-label="The VCM dashboard comparing revisions v1.0 and v1.1: four critical findings, a power budget of 4190 watts against 4000 usable, and findings split by confidence class.">
@@ -101,27 +123,63 @@
       </div>
       <p class="note">The dashboard &middot; sample data from examples/gpu-node</p>
     </div>
-    <div class="term ">
-      <div class="bar"><i></i><i></i><i></i><span>vcm impact v1.0 v1.1</span></div>
-<pre><span class="ln"><span class="dim"># 8x NVIDIA A100 PCIe 40GB  &rarr;  8x NVIDIA H100 NVL 94GB</span></span>
-<span class="ln"><span class="dim"># the manifest diff is eight replaced line items. this is what it means:</span></span>
-<span class="ln"></span>
-<span class="ln"><span class="hi">Findings:</span> <span class="v">verified 8</span>, <span class="r">rule_based 9</span>, <span class="s">speculative 4</span>   <span class="dim">| critical 4, warning 10, info 7</span></span>
-<span class="ln"></span>
-<span class="ln"><span class="c">[!! CRITICAL]</span> <span class="r">R001</span>  PSU_BANK cannot supply the node under its redundancy policy</span>
-<span class="ln">            4 supplies totalling 8000 W installed, <span class="hi">4000 W usable</span> under 2+2.</span>
-<span class="ln">            Declared draw <span class="hi">4190 W</span>. Losing a supply would drop the node.</span>
-<span class="ln"></span>
-<span class="ln"><span class="c">[!! CRITICAL]</span> <span class="r">R006</span>  Installed accelerator driver is below the required minimum</span>
-<span class="ln">            Node declares <span class="hi">470.223.02</span>; H100 NVL requires <span class="hi">525.60.13</span>.</span>
-<span class="ln"></span>
-<span class="ln"><span class="c">[!! CRITICAL]</span> <span class="v">V007</span>  The base configuration does not match the machine it describes</span>
-<span class="ln">            Observed by redfish, nvidia-smi: DIMM11 not reported by the machine.</span>
-<span class="ln"></span>
-<span class="ln"><span class="w">[ ! WARNING]</span> <span class="r">R007</span>  Power connector changed: 8-pin EPS &rarr; 12VHPWR on 8 devices<span class="cursor"></span></span></pre>
-    </div>
+  </div>
+  <div class="wrap frame strip">
+    <span>Reads</span><b>Redfish</b><b>nvidia-smi</b><b>NetBox</b><b>node manifests</b>
+    <span>Stores in</span><b>local files</b><b>Appwrite TablesDB</b>
   </div>
 </div>
+
+<section id="node">
+  <div class="wrap">
+    <div class="label" data-reveal>The node</div>
+    <h2 data-reveal style="--d:60ms">Down to the part, not just the file</h2>
+    <div class="sheet" data-reveal style="--d:110ms">
+      <div class="sheet-bar"><span class="dot"></span> gpu-node-01.node.json <em>bundled sample, synthetic data</em></div>
+      <div class="sheet-body">
+        <div class="sheet-head">
+          <h3>gpu-node-01</h3>
+          <p>Supermicro SYS-420GP-TNR, 4U. Eight GPUs, two CPUs, sixteen DIMMs and four power supplies
+             in a 2+2 bank. This is the machine VCM reads, diffs and checks: every part below is a
+             component it can compare, trace and cite.</p>
+        </div>
+        <div class="acards">
+          <figure class="acard"><figcaption><span class="dot"></span> GPU &middot; H100 NVL, PCIe</figcaption><svg class="art" data-art viewBox="0 0 280 124" role="img" aria-label="A dual-fan GPU card with its PCIe edge connector and power plug"><rect class="s" pathLength="1" style="--k:0" x="34" y="22" width="226" height="78" rx="5"/><rect class="s" pathLength="1" style="--k:1" x="14" y="14" width="20" height="94" rx="2"/><line class="s soft" pathLength="1" style="--k:2" x1="18" y1="28" x2="30" y2="28"/><line class="s soft" pathLength="1" style="--k:3" x1="18" y1="40" x2="30" y2="40"/><line class="s soft" pathLength="1" style="--k:4" x1="18" y1="52" x2="30" y2="52"/><circle class="s" pathLength="1" style="--k:5" cx="100" cy="61" r="30"/><circle class="s" pathLength="1" style="--k:6" cx="100" cy="61" r="7"/><line class="s soft" pathLength="1" style="--k:7" x1="107.0" y1="61.0" x2="123.69472917104007" y2="73.94448954231348"/><line class="s soft" pathLength="1" style="--k:8" x1="104.36442861301114" y1="66.47282037727621" x2="104.65301254728926" y2="87.5960424543722"/><line class="s soft" pathLength="1" style="--k:9" x1="98.4423534623058" y1="67.82449538527277" x2="82.1074825712711" y2="81.2202329378925"/><line class="s soft" pathLength="1" style="--k:10" x1="93.69321792468307" y1="64.0371861738229" x2="73.03538315992651" y2="59.618175601595865"/><line class="s soft" pathLength="1" style="--k:11" x1="93.69321792468307" y1="57.9628138261771" x2="84.2681902071007" y2="39.05666022137838"/><line class="s soft" pathLength="1" style="--k:12" x1="98.4423534623058" y1="54.17550461472723" x2="107.34737089876536" y2="35.01892725702082"/><line class="s soft" pathLength="1" style="--k:13" x1="104.36442861301113" y1="55.52717962272379" x2="124.89383144460697" y2="50.54547198542675"/><circle class="s" pathLength="1" style="--k:14" cx="192" cy="61" r="30"/><circle class="s" pathLength="1" style="--k:15" cx="192" cy="61" r="7"/><line class="s soft" pathLength="1" style="--k:16" x1="199.0" y1="61.0" x2="215.69472917104008" y2="73.94448954231348"/><line class="s soft" pathLength="1" style="--k:17" x1="196.36442861301114" y1="66.47282037727621" x2="196.65301254728928" y2="87.5960424543722"/><line class="s soft" pathLength="1" style="--k:18" x1="190.4423534623058" y1="67.82449538527277" x2="174.1074825712711" y2="81.2202329378925"/><line class="s soft" pathLength="1" style="--k:19" x1="185.69321792468307" y1="64.0371861738229" x2="165.0353831599265" y2="59.618175601595865"/><line class="s soft" pathLength="1" style="--k:20" x1="185.69321792468307" y1="57.9628138261771" x2="176.2681902071007" y2="39.05666022137838"/><line class="s soft" pathLength="1" style="--k:21" x1="190.4423534623058" y1="54.17550461472723" x2="199.34737089876538" y2="35.01892725702082"/><line class="s soft" pathLength="1" style="--k:22" x1="196.36442861301114" y1="55.52717962272379" x2="216.89383144460697" y2="50.54547198542675"/><rect class="s" pathLength="1" style="--k:23" x="196" y="12" width="52" height="10" rx="1"/><line class="s soft" pathLength="1" style="--k:24" x1="202" y1="14" x2="202" y2="20"/><line class="s soft" pathLength="1" style="--k:25" x1="210" y1="14" x2="210" y2="20"/><line class="s soft" pathLength="1" style="--k:26" x1="218" y1="14" x2="218" y2="20"/><line class="s soft" pathLength="1" style="--k:27" x1="226" y1="14" x2="226" y2="20"/><line class="s soft" pathLength="1" style="--k:28" x1="234" y1="14" x2="234" y2="20"/><line class="s soft" pathLength="1" style="--k:29" x1="242" y1="14" x2="242" y2="20"/><rect class="s" pathLength="1" style="--k:30" x="72" y="100" width="120" height="9" rx="0"/><line class="s soft" pathLength="1" style="--k:31" x1="76" y1="102" x2="76" y2="107"/><line class="s soft" pathLength="1" style="--k:32" x1="81" y1="102" x2="81" y2="107"/><line class="s soft" pathLength="1" style="--k:33" x1="86" y1="102" x2="86" y2="107"/><line class="s soft" pathLength="1" style="--k:34" x1="91" y1="102" x2="91" y2="107"/><line class="s soft" pathLength="1" style="--k:35" x1="96" y1="102" x2="96" y2="107"/><line class="s soft" pathLength="1" style="--k:36" x1="101" y1="102" x2="101" y2="107"/><line class="s soft" pathLength="1" style="--k:37" x1="106" y1="102" x2="106" y2="107"/><line class="s soft" pathLength="1" style="--k:38" x1="111" y1="102" x2="111" y2="107"/><line class="s soft" pathLength="1" style="--k:39" x1="116" y1="102" x2="116" y2="107"/><line class="s soft" pathLength="1" style="--k:40" x1="121" y1="102" x2="121" y2="107"/><line class="s soft" pathLength="1" style="--k:41" x1="126" y1="102" x2="126" y2="107"/><line class="s soft" pathLength="1" style="--k:42" x1="131" y1="102" x2="131" y2="107"/><line class="s soft" pathLength="1" style="--k:43" x1="136" y1="102" x2="136" y2="107"/><line class="s soft" pathLength="1" style="--k:44" x1="141" y1="102" x2="141" y2="107"/><line class="s soft" pathLength="1" style="--k:45" x1="146" y1="102" x2="146" y2="107"/><line class="s soft" pathLength="1" style="--k:46" x1="151" y1="102" x2="151" y2="107"/><line class="s soft" pathLength="1" style="--k:47" x1="156" y1="102" x2="156" y2="107"/><line class="s soft" pathLength="1" style="--k:48" x1="161" y1="102" x2="161" y2="107"/><line class="s soft" pathLength="1" style="--k:49" x1="166" y1="102" x2="166" y2="107"/><line class="s soft" pathLength="1" style="--k:50" x1="171" y1="102" x2="171" y2="107"/><line class="s soft" pathLength="1" style="--k:51" x1="176" y1="102" x2="176" y2="107"/><line class="s soft" pathLength="1" style="--k:52" x1="181" y1="102" x2="181" y2="107"/><line class="s soft" pathLength="1" style="--k:53" x1="186" y1="102" x2="186" y2="107"/><line class="s" pathLength="1" style="--k:54" x1="150" y1="100" x2="150" y2="109"/></svg></figure>
+          <figure class="acard"><figcaption><span class="dot"></span> DIMM &middot; 32GB DDR4 RDIMM</figcaption><svg class="art" data-art viewBox="0 0 300 124" role="img" aria-label="A memory module (DIMM) with eight chips and a keyed edge connector"><rect class="s" pathLength="1" style="--k:0" x="14" y="44" width="272" height="46" rx="2"/><rect class="s" pathLength="1" style="--k:1" x="30" y="52" width="24" height="20" rx="2"/><line class="s soft" pathLength="1" style="--k:2" x1="35" y1="58" x2="49" y2="58"/><line class="s soft" pathLength="1" style="--k:3" x1="35" y1="64" x2="44" y2="64"/><rect class="s" pathLength="1" style="--k:4" x="61" y="52" width="24" height="20" rx="2"/><line class="s soft" pathLength="1" style="--k:5" x1="66" y1="58" x2="80" y2="58"/><line class="s soft" pathLength="1" style="--k:6" x1="66" y1="64" x2="75" y2="64"/><rect class="s" pathLength="1" style="--k:7" x="92" y="52" width="24" height="20" rx="2"/><line class="s soft" pathLength="1" style="--k:8" x1="97" y1="58" x2="111" y2="58"/><line class="s soft" pathLength="1" style="--k:9" x1="97" y1="64" x2="106" y2="64"/><rect class="s" pathLength="1" style="--k:10" x="123" y="52" width="24" height="20" rx="2"/><line class="s soft" pathLength="1" style="--k:11" x1="128" y1="58" x2="142" y2="58"/><line class="s soft" pathLength="1" style="--k:12" x1="128" y1="64" x2="137" y2="64"/><rect class="s" pathLength="1" style="--k:13" x="154" y="52" width="24" height="20" rx="2"/><line class="s soft" pathLength="1" style="--k:14" x1="159" y1="58" x2="173" y2="58"/><line class="s soft" pathLength="1" style="--k:15" x1="159" y1="64" x2="168" y2="64"/><rect class="s" pathLength="1" style="--k:16" x="185" y="52" width="24" height="20" rx="2"/><line class="s soft" pathLength="1" style="--k:17" x1="190" y1="58" x2="204" y2="58"/><line class="s soft" pathLength="1" style="--k:18" x1="190" y1="64" x2="199" y2="64"/><rect class="s" pathLength="1" style="--k:19" x="216" y="52" width="24" height="20" rx="2"/><line class="s soft" pathLength="1" style="--k:20" x1="221" y1="58" x2="235" y2="58"/><line class="s soft" pathLength="1" style="--k:21" x1="221" y1="64" x2="230" y2="64"/><rect class="s" pathLength="1" style="--k:22" x="247" y="52" width="24" height="20" rx="2"/><line class="s soft" pathLength="1" style="--k:23" x1="252" y1="58" x2="266" y2="58"/><line class="s soft" pathLength="1" style="--k:24" x1="252" y1="64" x2="261" y2="64"/><rect class="s" pathLength="1" style="--k:25" x="14" y="90" width="272" height="10" rx="0"/><line class="s soft" pathLength="1" style="--k:26" x1="20" y1="92" x2="20" y2="98"/><line class="s soft" pathLength="1" style="--k:27" x1="24" y1="92" x2="24" y2="98"/><line class="s soft" pathLength="1" style="--k:28" x1="28" y1="92" x2="28" y2="98"/><line class="s soft" pathLength="1" style="--k:29" x1="32" y1="92" x2="32" y2="98"/><line class="s soft" pathLength="1" style="--k:30" x1="36" y1="92" x2="36" y2="98"/><line class="s soft" pathLength="1" style="--k:31" x1="40" y1="92" x2="40" y2="98"/><line class="s soft" pathLength="1" style="--k:32" x1="44" y1="92" x2="44" y2="98"/><line class="s soft" pathLength="1" style="--k:33" x1="48" y1="92" x2="48" y2="98"/><line class="s soft" pathLength="1" style="--k:34" x1="52" y1="92" x2="52" y2="98"/><line class="s soft" pathLength="1" style="--k:35" x1="56" y1="92" x2="56" y2="98"/><line class="s soft" pathLength="1" style="--k:36" x1="60" y1="92" x2="60" y2="98"/><line class="s soft" pathLength="1" style="--k:37" x1="64" y1="92" x2="64" y2="98"/><line class="s soft" pathLength="1" style="--k:38" x1="68" y1="92" x2="68" y2="98"/><line class="s soft" pathLength="1" style="--k:39" x1="72" y1="92" x2="72" y2="98"/><line class="s soft" pathLength="1" style="--k:40" x1="76" y1="92" x2="76" y2="98"/><line class="s soft" pathLength="1" style="--k:41" x1="80" y1="92" x2="80" y2="98"/><line class="s soft" pathLength="1" style="--k:42" x1="84" y1="92" x2="84" y2="98"/><line class="s soft" pathLength="1" style="--k:43" x1="88" y1="92" x2="88" y2="98"/><line class="s soft" pathLength="1" style="--k:44" x1="92" y1="92" x2="92" y2="98"/><line class="s soft" pathLength="1" style="--k:45" x1="96" y1="92" x2="96" y2="98"/><line class="s soft" pathLength="1" style="--k:46" x1="100" y1="92" x2="100" y2="98"/><line class="s soft" pathLength="1" style="--k:47" x1="104" y1="92" x2="104" y2="98"/><line class="s soft" pathLength="1" style="--k:48" x1="108" y1="92" x2="108" y2="98"/><line class="s soft" pathLength="1" style="--k:49" x1="112" y1="92" x2="112" y2="98"/><line class="s soft" pathLength="1" style="--k:50" x1="116" y1="92" x2="116" y2="98"/><line class="s soft" pathLength="1" style="--k:51" x1="120" y1="92" x2="120" y2="98"/><line class="s soft" pathLength="1" style="--k:52" x1="124" y1="92" x2="124" y2="98"/><line class="s soft" pathLength="1" style="--k:53" x1="128" y1="92" x2="128" y2="98"/><line class="s soft" pathLength="1" style="--k:54" x1="132" y1="92" x2="132" y2="98"/><line class="s soft" pathLength="1" style="--k:55" x1="148" y1="92" x2="148" y2="98"/><line class="s soft" pathLength="1" style="--k:56" x1="152" y1="92" x2="152" y2="98"/><line class="s soft" pathLength="1" style="--k:57" x1="156" y1="92" x2="156" y2="98"/><line class="s soft" pathLength="1" style="--k:58" x1="160" y1="92" x2="160" y2="98"/><line class="s soft" pathLength="1" style="--k:59" x1="164" y1="92" x2="164" y2="98"/><line class="s soft" pathLength="1" style="--k:60" x1="168" y1="92" x2="168" y2="98"/><line class="s soft" pathLength="1" style="--k:61" x1="172" y1="92" x2="172" y2="98"/><line class="s soft" pathLength="1" style="--k:62" x1="176" y1="92" x2="176" y2="98"/><line class="s soft" pathLength="1" style="--k:63" x1="180" y1="92" x2="180" y2="98"/><line class="s soft" pathLength="1" style="--k:64" x1="184" y1="92" x2="184" y2="98"/><line class="s soft" pathLength="1" style="--k:65" x1="188" y1="92" x2="188" y2="98"/><line class="s soft" pathLength="1" style="--k:66" x1="192" y1="92" x2="192" y2="98"/><line class="s soft" pathLength="1" style="--k:67" x1="196" y1="92" x2="196" y2="98"/><line class="s soft" pathLength="1" style="--k:68" x1="200" y1="92" x2="200" y2="98"/><line class="s soft" pathLength="1" style="--k:69" x1="204" y1="92" x2="204" y2="98"/><line class="s soft" pathLength="1" style="--k:70" x1="208" y1="92" x2="208" y2="98"/><line class="s soft" pathLength="1" style="--k:71" x1="212" y1="92" x2="212" y2="98"/><line class="s soft" pathLength="1" style="--k:72" x1="216" y1="92" x2="216" y2="98"/><line class="s soft" pathLength="1" style="--k:73" x1="220" y1="92" x2="220" y2="98"/><line class="s soft" pathLength="1" style="--k:74" x1="224" y1="92" x2="224" y2="98"/><line class="s soft" pathLength="1" style="--k:75" x1="228" y1="92" x2="228" y2="98"/><line class="s soft" pathLength="1" style="--k:76" x1="232" y1="92" x2="232" y2="98"/><line class="s soft" pathLength="1" style="--k:77" x1="236" y1="92" x2="236" y2="98"/><line class="s soft" pathLength="1" style="--k:78" x1="240" y1="92" x2="240" y2="98"/><line class="s soft" pathLength="1" style="--k:79" x1="244" y1="92" x2="244" y2="98"/><line class="s soft" pathLength="1" style="--k:80" x1="248" y1="92" x2="248" y2="98"/><line class="s soft" pathLength="1" style="--k:81" x1="252" y1="92" x2="252" y2="98"/><line class="s soft" pathLength="1" style="--k:82" x1="256" y1="92" x2="256" y2="98"/><line class="s soft" pathLength="1" style="--k:83" x1="260" y1="92" x2="260" y2="98"/><line class="s soft" pathLength="1" style="--k:84" x1="264" y1="92" x2="264" y2="98"/><line class="s soft" pathLength="1" style="--k:85" x1="268" y1="92" x2="268" y2="98"/><line class="s soft" pathLength="1" style="--k:86" x1="272" y1="92" x2="272" y2="98"/><line class="s soft" pathLength="1" style="--k:87" x1="276" y1="92" x2="276" y2="98"/><line class="s soft" pathLength="1" style="--k:88" x1="280" y1="92" x2="280" y2="98"/><path class="s" pathLength="1" style="--k:89" d="M136.0 100.0 L136.0 92.0 Z"/><path class="s" pathLength="1" style="--k:90" d="M146.0 100.0 L146.0 92.0 Z"/><path class="s" pathLength="1" style="--k:91" d="M14.0 44.0 L14.0 28.0 L24.0 28.0 L24.0 44.0 Z"/><path class="s" pathLength="1" style="--k:92" d="M286.0 44.0 L286.0 28.0 L276.0 28.0 L276.0 44.0 Z"/></svg></figure>
+          <figure class="acard"><figcaption><span class="dot"></span> PSU &middot; 2000W Titanium CRPS</figcaption><svg class="art" data-art viewBox="0 0 300 134" role="img" aria-label="A hot-swap power supply with a fan grille and vents"><rect class="s" pathLength="1" style="--k:0" x="24" y="22" width="252" height="92" rx="4"/><circle class="s" pathLength="1" style="--k:1" cx="100" cy="68" r="40"/><circle class="s soft" pathLength="1" style="--k:2" cx="100" cy="68" r="31"/><circle class="s soft" pathLength="1" style="--k:3" cx="100" cy="68" r="22"/><circle class="s soft" pathLength="1" style="--k:4" cx="100" cy="68" r="13"/><line class="s soft" pathLength="1" style="--k:5" x1="113.0" y1="68.0" x2="140.0" y2="68.0"/><line class="s soft" pathLength="1" style="--k:6" x1="109.19238815542512" y1="77.19238815542512" x2="128.2842712474619" y2="96.2842712474619"/><line class="s soft" pathLength="1" style="--k:7" x1="100.0" y1="81.0" x2="100.0" y2="108.0"/><line class="s soft" pathLength="1" style="--k:8" x1="90.80761184457488" y1="77.19238815542512" x2="71.7157287525381" y2="96.2842712474619"/><line class="s soft" pathLength="1" style="--k:9" x1="87.0" y1="68.0" x2="60.0" y2="68.0"/><line class="s soft" pathLength="1" style="--k:10" x1="90.80761184457488" y1="58.80761184457488" x2="71.7157287525381" y2="39.7157287525381"/><line class="s soft" pathLength="1" style="--k:11" x1="100.0" y1="55.0" x2="99.99999999999999" y2="28.0"/><line class="s soft" pathLength="1" style="--k:12" x1="109.19238815542512" y1="58.80761184457488" x2="128.2842712474619" y2="39.71572875253809"/><line class="s soft" pathLength="1" style="--k:13" x1="168" y1="34" x2="168" y2="100"/><line class="s soft" pathLength="1" style="--k:14" x1="175" y1="34" x2="175" y2="100"/><line class="s soft" pathLength="1" style="--k:15" x1="182" y1="34" x2="182" y2="100"/><line class="s soft" pathLength="1" style="--k:16" x1="189" y1="34" x2="189" y2="100"/><line class="s soft" pathLength="1" style="--k:17" x1="196" y1="34" x2="196" y2="100"/><line class="s soft" pathLength="1" style="--k:18" x1="203" y1="34" x2="203" y2="100"/><line class="s soft" pathLength="1" style="--k:19" x1="210" y1="34" x2="210" y2="100"/><line class="s soft" pathLength="1" style="--k:20" x1="217" y1="34" x2="217" y2="100"/><line class="s soft" pathLength="1" style="--k:21" x1="224" y1="34" x2="224" y2="100"/><line class="s soft" pathLength="1" style="--k:22" x1="231" y1="34" x2="231" y2="100"/><rect class="s" pathLength="1" style="--k:23" x="236" y="40" width="30" height="26" rx="2"/><line class="s soft" pathLength="1" style="--k:24" x1="244" y1="46" x2="258" y2="46"/><line class="s soft" pathLength="1" style="--k:25" x1="244" y1="52" x2="258" y2="52"/><rect class="s" pathLength="1" style="--k:26" x="236" y="80" width="30" height="22" rx="2"/><circle class="s soft" pathLength="1" style="--k:27" cx="251" cy="91" r="4"/><line class="s soft" pathLength="1" style="--k:28" x1="24" y1="122" x2="276" y2="122"/></svg></figure>
+        </div>
+        <figure class="acard big"><figcaption><span class="dot"></span> gpu-node-01 &middot; 4U &middot; 8 GPU &middot; 2 CPU &middot; 16 DIMM &middot; 4 PSU</figcaption><svg class="art" data-art viewBox="0 0 660 330" role="img" aria-label="Isometric cut-away of a 4U GPU server: 8 GPUs, 2 CPUs with 16 DIMMs, 4 power supplies"><path class="s" pathLength="1" style="--k:0" d="M330.0 3.5 L628.3 175.7 L450.7 278.2 L152.5 106.0 Z"/><path class="s" pathLength="1" style="--k:1" d="M152.5 106.0 L450.7 278.2 L450.7 330.7 L152.5 158.5 Z"/><path class="s" pathLength="1" style="--k:2" d="M628.3 175.7 L450.7 278.2 L450.7 330.7 L628.3 228.2 Z"/><path class="s" pathLength="1" style="--k:3" d="M332.8 13.4 L398.2 51.1 L374.0 65.0 L308.7 27.3 Z"/><path class="s" pathLength="1" style="--k:4" d="M403.9 54.4 L469.2 92.1 L445.0 106.0 L379.7 68.3 Z"/><path class="s" pathLength="1" style="--k:5" d="M474.9 95.4 L540.2 133.1 L516.1 147.0 L450.7 109.3 Z"/><path class="s" pathLength="1" style="--k:6" d="M545.9 136.4 L611.2 174.1 L587.1 188.0 L521.7 150.3 Z"/><path class="s" pathLength="1" style="--k:7" d="M236.3 72.4 L263.2 88.0 L199.3 124.9 L172.3 109.3 Z"/><path class="s" pathLength="1" style="--k:8" d="M271.8 92.9 L298.8 108.5 L234.8 145.4 L207.9 129.8 Z"/><path class="s" pathLength="1" style="--k:9" d="M307.3 113.4 L334.3 129.0 L270.3 165.9 L243.4 150.3 Z"/><path class="s" pathLength="1" style="--k:10" d="M342.8 133.9 L369.8 149.5 L305.9 186.4 L278.9 170.8 Z"/><path class="s" pathLength="1" style="--k:11" d="M378.3 154.4 L405.3 170.0 L341.4 206.9 L314.4 191.3 Z"/><path class="s" pathLength="1" style="--k:12" d="M413.8 174.9 L440.8 190.5 L376.9 227.4 L349.9 211.8 Z"/><path class="s" pathLength="1" style="--k:13" d="M449.3 195.4 L476.3 211.0 L412.4 247.9 L385.4 232.3 Z"/><path class="s" pathLength="1" style="--k:14" d="M484.8 215.9 L511.8 231.5 L447.9 268.4 L420.9 252.8 Z"/><path class="s" pathLength="1" style="--k:15" d="M341.4 77.3 L372.6 95.4 L344.2 111.8 L313.0 93.7 Z"/><path class="s soft" pathLength="1" style="--k:16" d="M313.0 57.6 L315.1 58.9 L281.0 78.5 L278.9 77.3 Z"/><path class="s soft" pathLength="1" style="--k:17" d="M378.3 95.4 L380.4 96.6 L346.3 116.3 L344.2 115.0 Z"/><path class="s soft" pathLength="1" style="--k:18" d="M316.5 59.7 L318.6 60.9 L284.6 80.6 L282.4 79.4 Z"/><path class="s soft" pathLength="1" style="--k:19" d="M381.8 97.4 L384.0 98.6 L349.9 118.3 L347.8 117.1 Z"/><path class="s soft" pathLength="1" style="--k:20" d="M320.1 61.7 L322.2 63.0 L288.1 82.7 L286.0 81.4 Z"/><path class="s soft" pathLength="1" style="--k:21" d="M385.4 99.5 L387.5 100.7 L353.4 120.4 L351.3 119.1 Z"/><path class="s soft" pathLength="1" style="--k:22" d="M323.6 63.8 L325.7 65.0 L291.7 84.7 L289.5 83.5 Z"/><path class="s soft" pathLength="1" style="--k:23" d="M388.9 101.5 L391.1 102.7 L357.0 122.4 L354.9 121.2 Z"/><path class="s soft" pathLength="1" style="--k:24" d="M327.2 65.8 L329.3 67.1 L295.2 86.8 L293.1 85.5 Z"/><path class="s soft" pathLength="1" style="--k:25" d="M392.5 103.6 L394.6 104.8 L360.5 124.5 L358.4 123.2 Z"/><path class="s soft" pathLength="1" style="--k:26" d="M330.7 67.9 L332.8 69.1 L298.8 88.8 L296.6 87.6 Z"/><path class="s soft" pathLength="1" style="--k:27" d="M396.0 105.6 L398.2 106.8 L364.1 126.5 L362.0 125.3 Z"/><path class="s soft" pathLength="1" style="--k:28" d="M334.3 69.9 L336.4 71.2 L302.3 90.8 L300.2 89.6 Z"/><path class="s soft" pathLength="1" style="--k:29" d="M399.6 107.7 L401.7 108.9 L367.6 128.6 L365.5 127.3 Z"/><path class="s soft" pathLength="1" style="--k:30" d="M337.8 72.0 L339.9 73.2 L305.9 92.9 L303.7 91.7 Z"/><path class="s soft" pathLength="1" style="--k:31" d="M403.1 109.7 L405.3 110.9 L371.2 130.6 L369.1 129.4 Z"/><path class="s" pathLength="1" style="--k:32" d="M469.2 151.1 L500.4 169.2 L472.0 185.6 L440.8 167.5 Z"/><path class="s soft" pathLength="1" style="--k:33" d="M440.8 131.4 L442.9 132.7 L408.8 152.3 L406.7 151.1 Z"/><path class="s soft" pathLength="1" style="--k:34" d="M506.1 169.2 L508.2 170.4 L474.2 190.1 L472.0 188.8 Z"/><path class="s soft" pathLength="1" style="--k:35" d="M444.3 133.5 L446.5 134.7 L412.4 154.4 L410.2 153.2 Z"/><path class="s soft" pathLength="1" style="--k:36" d="M509.7 171.2 L511.8 172.4 L477.7 192.1 L475.6 190.9 Z"/><path class="s soft" pathLength="1" style="--k:37" d="M447.9 135.5 L450.0 136.8 L415.9 156.4 L413.8 155.2 Z"/><path class="s soft" pathLength="1" style="--k:38" d="M513.2 173.3 L515.3 174.5 L481.3 194.2 L479.1 192.9 Z"/><path class="s soft" pathLength="1" style="--k:39" d="M451.4 137.6 L453.6 138.8 L419.5 158.5 L417.3 157.3 Z"/><path class="s soft" pathLength="1" style="--k:40" d="M516.8 175.3 L518.9 176.5 L484.8 196.2 L482.7 195.0 Z"/><path class="s soft" pathLength="1" style="--k:41" d="M455.0 139.6 L457.1 140.9 L423.0 160.5 L420.9 159.3 Z"/><path class="s soft" pathLength="1" style="--k:42" d="M520.3 177.4 L522.4 178.6 L488.4 198.3 L486.2 197.0 Z"/><path class="s soft" pathLength="1" style="--k:43" d="M458.5 141.7 L460.7 142.9 L426.6 162.6 L424.4 161.4 Z"/><path class="s soft" pathLength="1" style="--k:44" d="M523.9 179.4 L526.0 180.6 L491.9 200.3 L489.8 199.1 Z"/><path class="s soft" pathLength="1" style="--k:45" d="M462.1 143.7 L464.2 145.0 L430.1 164.6 L428.0 163.4 Z"/><path class="s soft" pathLength="1" style="--k:46" d="M527.4 181.5 L529.5 182.7 L495.5 202.4 L493.3 201.1 Z"/><path class="s soft" pathLength="1" style="--k:47" d="M465.6 145.8 L467.8 147.0 L433.7 166.7 L431.6 165.5 Z"/><path class="s soft" pathLength="1" style="--k:48" d="M531.0 183.5 L533.1 184.7 L499.0 204.4 L496.9 203.2 Z"/><path class="s soft" pathLength="1" style="--k:49" d="M298.8 33.0 L577.1 193.8 L572.9 196.2 L294.5 35.5 Z"/><path class="s soft" pathLength="1" style="--k:50" d="M173.8 126.5 L209.3 147.0 L209.3 183.1 L173.8 162.6 Z"/><line class="s soft" pathLength="1" style="--k:51" x1="179.45014380611318" y1="151.11999999999998" x2="203.59493206362333" y2="165.05999999999997"/><path class="s soft" pathLength="1" style="--k:52" d="M217.8 151.9 L253.3 172.4 L253.3 208.5 L217.8 188.0 Z"/><line class="s soft" pathLength="1" style="--k:53" x1="223.47887533451404" y1="176.53999999999996" x2="247.6236635920242" y2="190.47999999999996"/><path class="s soft" pathLength="1" style="--k:54" d="M261.8 177.4 L297.3 197.9 L297.3 233.9 L261.8 213.4 Z"/><line class="s soft" pathLength="1" style="--k:55" x1="267.5076068629149" y1="201.95999999999995" x2="291.65239512042507" y2="215.89999999999995"/><path class="s soft" pathLength="1" style="--k:56" d="M305.9 202.8 L341.4 223.3 L341.4 259.4 L305.9 238.9 Z"/><line class="s soft" pathLength="1" style="--k:57" x1="311.5363383913158" y1="227.37999999999997" x2="335.6811266488259" y2="241.31999999999996"/><path class="s soft" pathLength="1" style="--k:58" d="M349.9 228.2 L385.4 248.7 L385.4 284.8 L349.9 264.3 Z"/><line class="s soft" pathLength="1" style="--k:59" x1="355.5650699197166" y1="252.79999999999993" x2="379.7098581772268" y2="266.73999999999995"/><path class="s soft" pathLength="1" style="--k:60" d="M393.9 253.6 L429.4 274.1 L429.4 310.2 L393.9 289.7 Z"/><line class="s soft" pathLength="1" style="--k:61" x1="399.59380144811746" y1="278.21999999999997" x2="423.73858970562765" y2="292.15999999999997"/><line class="s soft" pathLength="1" style="--k:62" x1="585.6506991971663" y1="236.39999999999995" x2="493.3323911537451" y2="289.69999999999993"/><line class="s soft" pathLength="1" style="--k:63" x1="585.6506991971663" y1="228.19999999999996" x2="493.3323911537451" y2="281.4999999999999"/><line class="s soft" pathLength="1" style="--k:64" x1="585.6506991971663" y1="219.99999999999994" x2="493.3323911537451" y2="273.2999999999999"/></svg></figure>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <div class="label" data-reveal>How it works</div>
+    <h2 data-reveal style="--d:60ms">Three commands from change to consequence</h2>
+    <div class="steps" data-steps>
+      <div class="step">
+        <div class="stepn"><span>1</span></div>
+        <h3>Commit the configuration</h3>
+        <p>Snapshot a node manifest the way you snapshot code. Every file is pinned by hash.</p>
+        <code>vcm commit -m "v1.1" --tag v1.1</code>
+      </div>
+      <div class="step">
+        <div class="stepn"><span>2</span></div>
+        <h3>See what the change breaks</h3>
+        <p>Compare two revisions. Each finding says whether it is verified, rule-based or a guess.</p>
+        <code>vcm impact v1.0 v1.1</code>
+      </div>
+      <div class="step">
+        <div class="stepn"><span>3</span></div>
+        <h3>Trace the physical units</h3>
+        <p>Ask which registered machines carry an affected part, across the whole fleet.</p>
+        <code>vcm device affected --component GPU0</code>
+      </div>
+    </div>
+  </div>
+</section>
 
 <section id="change">
   <div class="wrap">
@@ -133,13 +191,13 @@
       not the bytes.
     </p>
     <div class="cards" data-stagger="80">
-      <div class="card lit"><div class="n">Inventory</div><h3>Models and part numbers</h3>
+      <div class="card lit"><div class="icowrap"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8l8-4 8 4-8 4z"/><path d="M4 12l8 4 8-4"/><path d="M4 16l8 4 8-4"/></svg></div><div class="n">Inventory</div><h3>Models and part numbers</h3>
         <p>Replacements, additions, removals and quantity shifts, grouped so eight identical GPUs
            report once rather than eight times.</p></div>
-      <div class="card lit"><div class="n">Fit</div><h3>Slots and form factors</h3>
+      <div class="card lit"><div class="icowrap"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h18v8H3z"/><path d="M7 8v8M11 8v8"/><path d="M15 12h3"/><path d="M3 19h18"/></svg></div><div class="n">Fit</div><h3>Slots and form factors</h3>
         <p>A changed slot or form factor means physical rework, and the rollback planner says so in
            the right words for the domain.</p></div>
-      <div class="card lit"><div class="n">Topology</div><h3>Connections</h3>
+      <div class="card lit"><div class="icowrap"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v5M12 10l-6 6M12 10l6 6"/><path d="M10 3h4v2h-4z"/><path d="M3 16h6v4H3zM15 16h6v4h-6z"/></svg></div><div class="n">Topology</div><h3>Connections</h3>
         <p>Which power domain, which PCIe root, which fabric &mdash; and what moved between them.</p></div>
     </div>
   </div>
@@ -401,27 +459,59 @@
   </div>
 </section>
 
+<section id="agents">
+  <div class="wrap">
+    <div class="label" data-reveal>Agents</div>
+    <h2 data-reveal style="--d:60ms">Agents propose. People decide.</h2>
+    <p class="sub" data-reveal style="--d:110ms">
+      Connect an AI agent over MCP and it can read everything VCM knows: diffs, impact reports,
+      drift, the fleet. What it can write is a proposal, and nothing more. A named person
+      decides, and the audit log records who.
+    </p>
+    <div class="flow" data-flow aria-label="An agent files a proposal, a person approves it, and the audit log records it.">
+      <div class="fnode"><b>Agent</b><span>reads freely<br>proposes with a reason</span></div>
+      <div class="fwire"><i></i></div>
+      <div class="fnode"><b>Proposal</b><span>pending, prechecked<br>against the repository</span></div>
+      <div class="fwire"><i></i></div>
+      <div class="fnode person"><b>Person</b><span>approves or rejects<br>never the proposer</span></div>
+      <div class="fwire"><i></i></div>
+      <div class="fnode"><b>Audit log</b><span>hash-chained<br>names the approver</span></div>
+    </div>
+    <div class="cards" style="margin-top:34px" data-stagger="90">
+      <div class="card"><h3>Read-only by construction</h3>
+        <p>Every tool but one cannot change anything. A test fails if a tool name contains
+           approve, sign, commit, push or lock.</p></div>
+      <div class="card"><h3>Checked before it is believed</h3>
+        <p>A claim checker recomputes the report from the repository, so an agent cannot quote a
+           finding that does not exist or upgrade a guess to a fact.</p></div>
+      <div class="card honest"><h3>Not yet driven by a live agent</h3>
+        <p>It has been tested over the protocol and a scripted client. The evals have only met
+           reference answerers. The dashboard's Agents page is where a person decides.</p></div>
+    </div>
+  </div>
+</section>
+
 <section id="more">
   <div class="wrap">
     <div class="label" data-reveal>06 &mdash; The rest of it</div>
     <h2 data-reveal style="--d:60ms">Everything around the change</h2>
     <div class="cards" data-stagger="70">
-      <div class="card"><div class="n">Releases</div><h3>Pinned and signed</h3>
+      <div class="card"><div class="icowrap"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7l8-4 8 4v10l-8 4-8-4z"/><path d="M4 7l8 4 8-4M12 11v10"/><path d="M8 5l8 4"/></svg></div><div class="n">Releases</div><h3>Pinned and signed</h3>
         <p>Manifests pin every file by hash. Ed25519 signatures and a hash-chained audit log make a
            release something you can prove, not just re-hash.</p></div>
-      <div class="card"><div class="n">Lineage</div><h3>Units and recalls</h3>
+      <div class="card"><div class="icowrap"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4v10a4 4 0 004 4h2"/><path d="M6 8a2 2 0 100-4 2 2 0 000 4z"/><path d="M18 16a2 2 0 100 4 2 2 0 000-4z"/><path d="M18 12a2 2 0 100-4 2 2 0 000 4z"/><path d="M18 12v4M10 8h6"/></svg></div><div class="n">Lineage</div><h3>Units and recalls</h3>
         <p>Every unit is registered against a release, with a passport and QR. Ask which units carry
            a part and get an answer grouped by the variant actually fitted.</p></div>
-      <div class="card"><div class="n">Rollback</div><h3>What is reversible</h3>
+      <div class="card"><div class="icowrap"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 8H4V3"/><path d="M4 8a9 9 0 11-1 6"/><path d="M12 8v5l3 2"/></svg></div><div class="n">Rollback</div><h3>What is reversible</h3>
         <p>Splits a change into software-reversible, physical rework and platform change &mdash; and
            lists the units not yet at the target revision.</p></div>
-      <div class="card"><div class="n">Reality</div><h3>Redfish and nvidia-smi</h3>
+      <div class="card"><div class="icowrap"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v11H3z"/><path d="M8 20h8M12 16v4"/><path d="M6 11h3l2-3 2 5 2-2h3"/></svg></div><div class="n">Reality</div><h3>Redfish and nvidia-smi</h3>
         <p>Import what the machine actually reports and compare it to the manifest. Drift is a
            finding, so a report never reasons about a node that does not exist.</p></div>
-      <div class="card"><div class="n">Fleet</div><h3>Racks and rollout</h3>
+      <div class="card"><div class="icowrap"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v5H5zM5 10h14v5H5zM5 17h14v4H5z"/><path d="M8 5.5h.01M8 12.5h.01M8 19h.01"/><path d="M12 5.5h4M12 12.5h4"/></svg></div><div class="n">Fleet</div><h3>Racks and rollout</h3>
         <p>Rack power budgets before and after a change, rollout waves, and queries across every
            registered unit.</p></div>
-      <div class="card"><div class="n">Interfaces</div><h3>CLI, API, dashboard, MCP</h3>
+      <div class="card"><div class="icowrap"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v14H3z"/><path d="M7 10l3 2-3 2"/><path d="M12 15h5"/></svg></div><div class="n">Interfaces</div><h3>CLI, API, dashboard, MCP</h3>
         <p>A <code>vcm</code> command, an authenticated REST API with roles, an offline dashboard,
            and an MCP server so an agent can read freely and propose &mdash; a person decides.</p></div>
     </div>
@@ -493,7 +583,7 @@
 <footer class="site">
   <div class="wrap">
     <span>VCM &mdash; version control for datacenter hardware.</span>
-    <nav>
+    <nav aria-label="Footer">
       <a href="https://github.com/solomonwilsonr/-vcm-hardware">Source</a>
       <a href="https://github.com/solomonwilsonr/-vcm-hardware#readme">README</a>
     </nav>
@@ -501,5 +591,6 @@
 </footer>
 
 <script src="motion.js"></script>
+<script src="demo.js"></script>
 </body>
 </html>

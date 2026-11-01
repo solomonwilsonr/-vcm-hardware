@@ -102,3 +102,54 @@ def test_record_names_cannot_escape(repo):
             repo.load_record("releases", bad)
     repo.save_record("releases", "ok", {"name": "ok"})
     assert repo.load_record("releases", "ok") == {"name": "ok"}
+
+
+def test_overlong_names_are_rejected_not_crashed(repo):
+    """A name the filesystem cannot hold is 'not found' / 'invalid', never an OSError."""
+    from vcm_core.records import MAX_NAME, RecordError, check_name
+    long = "a" * 5000
+    with pytest.raises(VcmError, match="unknown revision"):
+        repo.resolve(long)
+    with pytest.raises(RecordError, match="too long"):
+        check_name("releases", "r" * (MAX_NAME + 1))
+    assert check_name("releases", "r" * MAX_NAME)  # the limit itself is allowed
+    with pytest.raises(VcmError, match="too long"):   # load_record wraps RecordError
+        repo.load_record("releases", long)
+
+
+def _commit_loop(args):
+    root, who, n = args
+    import os
+
+    from vcm_core import NothingToCommit, Repository
+    os.environ["VCM_AUTHOR"] = who
+    repo = Repository.discover(root)
+    won = 0
+    for i in range(n):
+        (repo.root / f"{who}-{i}.txt").write_text(f"{who} {i}\n")   # changes the tree each time
+        try:
+            repo.commit(f"{who} {i}")
+            won += 1
+        except NothingToCommit:
+            pass
+    return won
+
+
+def test_concurrent_commits_never_lose_a_reported_success(tmp_path):
+    """Concurrency testing found two commits both reporting success while one became unreachable
+    (both read the same parent; the later write to the branch ref won).
+
+    Invariant: every commit that reported success is reachable from HEAD."""
+    import multiprocessing as mp
+
+    from vcm_core import Repository
+    repo = Repository.init(tmp_path)
+    (tmp_path / "base.txt").write_text("base\n")
+    repo.commit("base")
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(8) as pool:
+        wins = sum(pool.map(_commit_loop, [(str(tmp_path), f"w{i}", 6) for i in range(8)]))
+    repo = Repository.discover(tmp_path)
+    reachable = len(list(repo.log())) - 1                      # minus the base commit
+    assert wins == reachable, f"{wins} commits reported success, {reachable} reachable"
+    assert repo.audit.verify()["ok"]

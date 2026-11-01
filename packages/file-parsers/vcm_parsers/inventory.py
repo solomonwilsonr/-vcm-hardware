@@ -92,6 +92,21 @@ def _links_fetched(body: dict, key: str, resources: dict) -> bool:
 
 
 def parse_redfish(capture: dict | str, report: dict | None = None) -> dict:
+    """Parse a Redfish capture; see :func:`_parse_redfish`.
+
+    A capture that is valid JSON but shaped unexpectedly (a ``null`` where a resource body should
+    be, a list where an object should be) is a ``ValueError`` with a pointer to the doctor, not a
+    traceback: BMC output is messy and the reader should be told, loudly, that it was not read.
+    """
+    try:
+        return _parse_redfish(capture, report)
+    except (AttributeError, TypeError) as e:
+        raise ValueError(
+            f"redfish capture has an unexpected shape ({type(e).__name__}: {e}); "
+            "run `vcm inventory doctor` on it to see which resource") from e
+
+
+def _parse_redfish(capture: dict | str, report: dict | None = None) -> dict:
     """Parse a Redfish capture: ``{"resources": {uri: body}}`` or a bare ``{uri: body}`` map.
 
     ``covers`` lists only the component types this capture can actually vouch for: ones it

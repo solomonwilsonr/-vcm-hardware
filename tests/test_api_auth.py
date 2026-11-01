@@ -108,3 +108,36 @@ def test_required_role_table():
     assert required_role("GET", "/api/impact") == "viewer"
     assert required_role("POST", "/api/devices") == "editor"
     assert required_role("POST", "/api/prs/3/approvals") == "approver"
+
+
+def test_agent_proposals_are_decided_by_people_through_the_api(sample_repo, tokens):
+    """The dashboard's Agents page forwards a person's decision; the API enforces who may."""
+    from vcm_mcp.proposals import propose
+    pid = propose(sample_repo, "pr.open",
+                  {"base": "v1.0", "head": "v1.1", "title": "agent asks for a review"},
+                  "impact has critical findings", proposer="agent:claude")["id"]
+    own = propose(sample_repo, "pr.open", {"base": "v1.0", "head": "v1.1", "title": "mine"},
+                  "approver-made", proposer="approver-user")["id"]
+    c = TestClient(create_app(str(sample_repo.root)))
+    # visible to a viewer, decidable only by an approver
+    assert c.get("/api/proposals", headers=_auth(tokens["viewer"])).status_code == 200
+    assert c.post(f"/api/proposals/{pid}/approve", headers=_auth(tokens["viewer"])).status_code == 403
+    assert c.post(f"/api/proposals/{pid}/approve", headers=_auth(tokens["editor"])).status_code == 403
+    # nobody decides their own proposal
+    r = c.post(f"/api/proposals/{own}/approve", headers=_auth(tokens["approver"]))
+    assert r.status_code == 400 and "made it" in r.json()["detail"]
+    # a person other than the proposer can
+    ok = c.post(f"/api/proposals/{pid}/approve", headers=_auth(tokens["approver"]))
+    assert ok.status_code == 200 and ok.json()["decided_by"] == "approver-user"
+    # and a decided proposal cannot be decided again
+    again = c.post(f"/api/proposals/{pid}/reject", json={"reason": "x"},
+                   headers=_auth(tokens["approver"]))
+    assert again.status_code == 400
+
+
+def test_insecure_mode_cannot_decide_proposals(sample_repo):
+    from vcm_mcp.proposals import propose
+    pid = propose(sample_repo, "pr.open", {"base": "v1.0", "head": "v1.1", "title": "t"},
+                  "r", proposer="agent:claude")["id"]
+    c = TestClient(create_app(str(sample_repo.root), insecure=True))
+    assert c.post(f"/api/proposals/{pid}/approve").status_code == 403

@@ -169,3 +169,31 @@ def test_cli_key_sign_verify_audit(sample_repo, capsys):
     assert main(["-C", root, "audit", "log", "--json"]) == 0
     actions = [e["action"] for e in json.loads(capsys.readouterr().out)]
     assert {"key.trust", "release.create", "release.sign"} <= set(actions)
+
+
+def _append_many(args):
+    vcm_dir, who, n = args
+    from vcm_core.audit import AuditLog
+    log = AuditLog(vcm_dir)
+    for i in range(n):
+        log.append("test.concurrent", f"{who}-{i}", {"i": i}, actor=who)
+
+
+def test_concurrent_appends_keep_the_chain_valid(tmp_path):
+    """Concurrency testing found two processes forking the chain (a duplicated sequence number).
+
+    Appending is read-last-then-write, so it must hold a lock across both."""
+    import multiprocessing as mp
+    from concurrent.futures import ThreadPoolExecutor
+
+    from vcm_core.audit import AuditLog
+    d = tmp_path / ".vcm"
+    procs, per = 6, 30
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(procs) as pool:
+        pool.map(_append_many, [(str(d), f"p{i}", per) for i in range(procs)])
+    with ThreadPoolExecutor(8) as ex:   # and from threads, as the API server does
+        list(ex.map(_append_many, [(str(d), f"t{i}", 20) for i in range(8)]))
+    verdict = AuditLog(d).verify()
+    assert verdict["ok"], verdict
+    assert verdict["events"] == procs * per + 8 * 20

@@ -178,10 +178,14 @@
 
   const SEV = { critical: "!!", warning: "!", info: "i" };
   const SEV_RANK = { critical: 0, warning: 1, info: 2 };
+  /* Plain words, because "critical" and "info" describe the finding, not what
+     the reader is meant to do about it. The raw class stays in the title. */
+  const SEV_LABEL = { critical: "Must fix", warning: "Worth checking", info: "FYI" };
 
   function schip(sev) {
-    return h("span", { class: "schip " + sev },
-      h("span", { class: "g", "aria-hidden": "true" }, SEV[sev] || "?"), sev);
+    return h("span", { class: "schip " + sev, title: sev },
+      h("span", { class: "g", "aria-hidden": "true" }, SEV[sev] || "?"),
+      SEV_LABEL[sev] || sev);
   }
 
   function refChips(refs, onPick) {
@@ -283,7 +287,7 @@
     repo: null,
     revs: [],
     devices: [],
-    cmp: { a: null, b: null },
+    cmp: { a: null, b: null, tab: "impact", sev: null, cls: null, data: null },
     lineage: { ref: null, rev: "HEAD", depth: 2, serial: null },
     releases: { selected: null },
     review: { selected: null },
@@ -304,18 +308,28 @@
 
   /* -------------------------------------------------------------- compare */
 
+  /* The compare page answers three questions in order: can this ship, what
+     changed, and on what evidence. Each one is a tab, so the page is never
+     more than one screen of reading before the reader chooses to go deeper. */
+
+  const TABS = [
+    { id: "impact", label: "What it affects" },
+    { id: "changes", label: "What changed" },
+    { id: "evidence", label: "What VCM knows" },
+  ];
+
   function compareView(main) {
     const opts = revOptions();
     const bar = h("div", { class: "toolbar" },
-      field("Base", select("cmp-a", opts, S.cmp.a, (e) => { S.cmp.a = e.target.value; })),
-      h("button", { class: "swap", type: "button", title: "Swap base and head",
+      field("Before", select("cmp-a", opts, S.cmp.a, (e) => { S.cmp.a = e.target.value; })),
+      h("button", { class: "swap", type: "button", title: "Swap the two revisions",
         onclick: () => {
           const a = byId("cmp-a"), b = byId("cmp-b");
           const t = a.value; a.value = b.value; b.value = t;
           S.cmp.a = a.value; S.cmp.b = b.value;
           runCompare();
         } }, "⇄"),
-      field("Head", select("cmp-b", opts, S.cmp.b, (e) => { S.cmp.b = e.target.value; })),
+      field("After", select("cmp-b", opts, S.cmp.b, (e) => { S.cmp.b = e.target.value; })),
       h("button", { class: "primary", type: "button", id: "cmp-go", onclick: runCompare },
         "Compare"));
 
@@ -323,10 +337,10 @@
 
     mount(main,
       h("div", { class: "view-head" },
-        h("h1", {}, "Compare revisions"),
-        h("p", {}, "What changed between two revisions, what else it touches, and on what " +
-          "evidence. Every impact finding carries exactly one confidence class.")),
-      panel("Revision pair", { count: plural(S.revs.length, "revision") }, bar),
+        h("h1", {}, "What changed, and what it affects"),
+        h("p", {}, "Pick two revisions of the node. VCM lists the hardware changes, then the " +
+          "problems they could cause — each one labelled with how much VCM actually knows.")),
+      panel("Revisions to compare", { count: plural(S.revs.length, "revision") }, bar),
       out);
     S.ui.cmpOut = out;
     runCompare();
@@ -336,7 +350,7 @@
     const out = S.ui.cmpOut;
     if (!out) return;
     const a = S.cmp.a, b = S.cmp.b;
-    clear(out).append(loading("Diffing " + revShort(a) + " → " + revShort(b)));
+    clear(out).append(loading("Comparing " + revShort(a) + " → " + revShort(b)));
     const go = byId("cmp-go");
     if (go) go.disabled = true;
     const q = "a=" + encodeURIComponent(a) + "&b=" + encodeURIComponent(b);
@@ -346,11 +360,10 @@
         api("/api/impact?" + q),
         api("/api/validation/compare?" + q).catch(() => null),
       ]);
-      mount(clear(out),
-        verdictBlock(impact, a, b),
-        statStrip(diff, impact, vcmp),
-        h("div", { class: "grid-2" }, diffColumn(diff), impactColumn(impact)),
-        retestPanel(impact));
+      S.cmp.data = { diff: diff, impact: impact, vcmp: vcmp, a: a, b: b };
+      S.cmp.sev = null;
+      S.cmp.cls = null;
+      drawCompare();
     } catch (e) {
       clear(out).append(errBox(e));
     } finally {
@@ -358,59 +371,259 @@
     }
   }
 
-  function verdictBlock(impact, a, b) {
-    const f = impact.findings.slice().sort((x, y) => SEV_RANK[x.severity] - SEV_RANK[y.severity]);
-    const top = f[0];
-    const by = impact.summary.by_class || {};
-    const counts = h("div", { class: "vmeta" },
-      CONF_ORDER.map((c) => h("span", { class: "cchip " + c }, cmark(c),
-        (by[c] || 0) + " " + CONF[c].label)));
-    if (!top) {
-      return h("div", { class: "verdict clean" },
-        h("div", {},
-          h("div", { class: "vtitle" }, "No impact findings"),
-          h("div", { class: "vdetail" }, "Nothing in the design data links this change to " +
-            "anything else."), counts));
-    }
-    return h("div", { class: "verdict " + top.severity },
-      h("div", { style: "min-width:0" },
-        h("div", { class: "vmeta" }, schip(top.severity), cchip(top.confidence_class),
-          h("span", { class: "fid mono" }, top.id),
-          h("span", { class: "fid mono" }, revShort(a) + " → " + revShort(b))),
-        h("div", { class: "vtitle" }, top.title),
-        h("div", { class: "vdetail" }, top.detail),
-        counts));
+  function drawCompare() {
+    const out = S.ui.cmpOut, d = S.cmp.data;
+    if (!out || !d) return;
+    const body = h("div", { id: "cmp-tab" });
+    S.ui.cmpTab = body;
+    mount(clear(out),
+      verdictBlock(d.impact, d.a, d.b),
+      statStrip(d.diff, d.impact, d.vcmp),
+      tabBar(d),
+      body);
+    drawTab();
   }
 
+  function tabBar(d) {
+    const counts = {
+      impact: d.impact.findings.length,
+      changes: changeCount(d.diff),
+      evidence: null,
+    };
+    return h("div", { class: "tabs", role: "tablist" }, TABS.map((t) =>
+      h("button", {
+        class: "tab" + (S.cmp.tab === t.id ? " on" : ""),
+        type: "button", role: "tab", "aria-selected": S.cmp.tab === t.id ? "true" : "false",
+        onclick: () => { S.cmp.tab = t.id; drawCompare(); },
+      }, t.label,
+        counts[t.id] !== null ? h("span", { class: "tcount" }, counts[t.id]) : null)));
+  }
+
+  function drawTab() {
+    const box = S.ui.cmpTab, d = S.cmp.data;
+    if (!box || !d) return;
+    clear(box);
+    if (S.cmp.tab === "changes") mount(box, changesTab(d.diff));
+    else if (S.cmp.tab === "evidence") mount(box, evidenceTab(d.impact, d.vcmp));
+    else mount(box, impactTab(d.impact));
+  }
+
+  function changeCount(d) {
+    const s = d.summary;
+    return s.replaced + s.value_changed + s.added + s.removed + s.footprint_changed +
+      s.moved + s.count_changes + (s.nets_added || 0) + (s.nets_removed || 0) +
+      (s.nets_changed || 0);
+  }
+
+  /* ---------------------------------------------------------- the verdict */
+
+  /* One sentence that answers "can I build this?", then the blockers themselves.
+     Everything else on the page is detail behind that answer. */
+  function verdictBlock(impact, a, b) {
+    const sev = impact.summary.by_severity || {};
+    const crit = sev.critical || 0, warn = sev.warning || 0;
+    const tone = crit ? "critical" : warn ? "warning" : "clean";
+    const headline = crit ? "Do not build this yet"
+      : warn ? "Buildable, but check these first"
+      : "Nothing is blocking this change";
+    const sub = crit
+      ? plural(crit, "blocking problem") + " must be resolved before this configuration is built."
+      : warn
+        ? plural(warn, "thing") + " to look at. None of them blocks the build."
+        : "Nothing in the design data links this change to a problem.";
+
+    const top = impact.findings
+      .filter((f) => f.severity === (crit ? "critical" : "warning"))
+      .slice(0, 3);
+
+    const by = impact.summary.by_class || {};
+    return h("div", { class: "verdict " + tone },
+      h("div", { style: "min-width:0" },
+        h("div", { class: "vmeta" },
+          h("span", { class: "fid mono" }, revShort(a) + " → " + revShort(b))),
+        h("div", { class: "vtitle" }, headline),
+        h("div", { class: "vdetail" }, sub),
+        top.length
+          ? h("ul", { class: "vlist" }, top.map((f) =>
+              h("li", {},
+                h("button", { class: "vjump", type: "button",
+                  title: "Show this finding and its evidence",
+                  onclick: () => focusFinding(f.id) }, f.title),
+                cchip(f.confidence_class))))
+          : null,
+        h("div", { class: "vmeta" },
+          h("span", { class: "dim" }, "Evidence behind the " +
+            plural(impact.findings.length, "finding") + ":"),
+          CONF_ORDER.map((c) => h("span", { class: "cchip " + c, title: CONF[c].blurb },
+            cmark(c), (by[c] || 0) + " " + CONF[c].label)))));
+  }
+
+  function focusFinding(id) {
+    S.cmp.tab = "impact";
+    S.cmp.sev = null;
+    S.cmp.cls = null;
+    drawCompare();
+    const el = byId("f-" + id);
+    if (!el) return;
+    el.open = true;
+    el.scrollIntoView({ block: "center" });
+    el.classList.add("flash");
+    setTimeout(() => el.classList.remove("flash"), 1200);
+  }
+
+  /* ------------------------------------------------------------ the numbers */
+
+  /* Four numbers a reader can hold in their head; the rest stay folded away.
+     The old strip showed eleven at once and none of them stood out. */
   function statStrip(diff, impact, vcmp) {
     const d = diff.summary;
     const sev = impact.summary.by_severity || {};
     const nets = (d.nets_added || 0) + (d.nets_removed || 0) + (d.nets_changed || 0);
     const arts = diff.artifacts;
     const artn = arts.added.length + arts.removed.length + arts.modified.length;
-    return h("div", { class: "stats" },
-      stat(d.replaced + d.value_changed, "components changed"),
-      stat(d.footprint_changed, "form factors"),
-      stat(d.moved, "repositioned"),
-      stat(d.count_changes, "line items"),
-      stat(nets, "connections"),
-      stat(artn, "files"),
-      stat(impact.findings.length, "findings"),
-      stat(sev.critical || 0, "critical", sev.critical ? "bad" : null),
-      impact.summary.trust && impact.summary.trust.catalog_values
-        ? stat(impact.summary.trust.catalog_verified + "/" + impact.summary.trust.catalog_values,
-            "catalog values checked", impact.summary.trust.catalog_verified ? null : "bad")
-        : null,
-      stat(impact.catalog && typeof impact.catalog.ratio === "number"
-        ? Math.round(impact.catalog.ratio * 100) + "%" : "n/a", "catalog"),
-      stat(vcmp ? vcmp.status.from + "→" + vcmp.status.to : "n/a", "validation",
-        "txt " + (vcmp && vcmp.regression ? "bad" : vcmp ? "ok" : "")));
+    const cat = impact.catalog && typeof impact.catalog.ratio === "number"
+      ? Math.round(impact.catalog.ratio * 100) + "%" : "n/a";
+    const trust = impact.summary.trust;
+
+    const more = h("details", { class: "morestats" },
+      h("summary", {}, "All the other numbers"),
+      h("div", { class: "stats small" },
+        stat(d.footprint_changed, "slot / form factor changes"),
+        stat(d.moved, "repositioned"),
+        stat(d.count_changes, "line-item quantity changes"),
+        stat(nets, "power / data connections changed"),
+        stat(artn, "files changed"),
+        stat(sev.warning || 0, "worth checking"),
+        stat(sev.info || 0, "for information"),
+        trust && trust.catalog_values
+          ? stat(trust.catalog_verified + "/" + trust.catalog_values,
+              "cited catalog values a human checked", trust.catalog_verified ? null : "bad")
+          : null,
+        stat(vcmp ? vcmp.status.from + " → " + vcmp.status.to : "n/a", "design checks",
+          "txt " + (vcmp && vcmp.regression ? "bad" : vcmp ? "ok" : ""))));
+
+    return h("div", {},
+      h("div", { class: "stats" },
+        stat(d.replaced + d.value_changed, "components changed"),
+        stat(impact.findings.length, "things it affects"),
+        stat(sev.critical || 0, "must fix first", sev.critical ? "bad" : "ok"),
+        stat(cat, "of changed parts VCM has data for")),
+      more);
   }
 
-  /* --------------------------------------------------------- diff column */
+  /* -------------------------------------------------------- impact tab */
+
+  const SEV_FILTERS = [
+    { id: "critical", label: "Must fix" },
+    { id: "warning", label: "Worth checking" },
+    { id: "info", label: "For information" },
+  ];
+
+  function impactTab(rep) {
+    const list = h("div", { id: "cmp-flist" });
+    S.ui.flist = list;
+    const out = h("div", {},
+      filterBar(rep),
+      list,
+      retestPanel(rep));
+    drawFindings(rep);
+    return out;
+  }
+
+  function filterBar(rep) {
+    const sev = rep.summary.by_severity || {};
+    const by = rep.summary.by_class || {};
+    const toggle = (key, val) => {
+      S.cmp[key] = S.cmp[key] === val ? null : val;
+      drawFindings(rep);
+      const bar = byId("cmp-filters");
+      if (bar) bar.replaceWith(filterBar(rep));
+    };
+    return h("div", { class: "filters", id: "cmp-filters" },
+      h("span", { class: "flabel" }, "Show"),
+      h("button", { type: "button", class: "fchip" + (S.cmp.sev ? "" : " on"),
+        onclick: () => { S.cmp.sev = null; toggle("sev", null); } }, "Everything"),
+      SEV_FILTERS.map((f) => h("button", {
+        type: "button", class: "fchip sev-" + f.id + (S.cmp.sev === f.id ? " on" : ""),
+        disabled: !(sev[f.id] || 0),
+        onclick: () => toggle("sev", f.id),
+      }, f.label, h("span", { class: "tcount" }, sev[f.id] || 0))),
+      h("span", { class: "fsep" }),
+      h("span", { class: "flabel" }, "Evidence"),
+      CONF_ORDER.map((c) => h("button", {
+        type: "button", class: "fchip cls-" + c + (S.cmp.cls === c ? " on" : ""),
+        title: CONF[c].blurb,
+        disabled: !(by[c] || 0),
+        onclick: () => toggle("cls", c),
+      }, cmark(c), CONF[c].label, h("span", { class: "tcount" }, by[c] || 0))),
+      h("button", { type: "button", class: "fchip help",
+        onclick: () => { S.cmp.tab = "evidence"; drawCompare(); } }, "What do these mean?"));
+  }
+
+  function drawFindings(rep) {
+    const box = S.ui.flist;
+    if (!box) return;
+    const items = rep.findings
+      .filter((f) => (!S.cmp.sev || f.severity === S.cmp.sev) &&
+        (!S.cmp.cls || f.confidence_class === S.cmp.cls))
+      .sort((x, y) => (SEV_RANK[x.severity] - SEV_RANK[y.severity]) ||
+        (CONF_ORDER.indexOf(x.confidence_class) - CONF_ORDER.indexOf(y.confidence_class)));
+    clear(box);
+    if (!items.length) {
+      mount(box, empty("Nothing matches that filter."));
+      return;
+    }
+    mount(box, h("div", { class: "flist" }, items.map(findingRow)));
+  }
+
+  /* A finding is one line until the reader opens it. Blockers open themselves:
+     those are the ones somebody has to act on. */
+  function findingRow(f) {
+    return h("details", {
+      class: "finding " + f.confidence_class + " sev-" + f.severity,
+      id: "f-" + f.id,
+      open: f.severity === "critical",
+    },
+      h("summary", {},
+        schip(f.severity),
+        h("span", { class: "ftitle" }, f.title),
+        cchip(f.confidence_class),
+        f.refs && f.refs.length
+          ? h("span", { class: "fid mono" }, plural(f.refs.length, "part"))
+          : null),
+      h("div", { class: "fbody" },
+        f.detail ? h("p", { class: "fdetail" }, f.detail) : null,
+        f.refs && f.refs.length
+          ? h("p", { class: "fhint" }, "Affected — click one to see which built units carry it")
+          : null,
+        refChips(f.refs, traceRef),
+        evidenceBlock(f.evidence, "Where this came from")));
+  }
+
+  function retestPanel(rep) {
+    const rows = (rep.required_retests || []).map((t) =>
+      h("tr", {},
+        h("td", { class: "m" }, t.name),
+        h("td", {}, cchip(t.confidence_class)),
+        h("td", {}, t.reason, evidenceBlock(t.evidence, "Where this came from"))));
+    return panel("Re-test before you ship", { count: (rep.required_retests || []).length,
+      flush: true },
+      rows.length
+        ? table(["Test", "Evidence", "Why"], rows)
+        : empty("No re-tests are implied by this change."));
+  }
+
+  /* --------------------------------------------------------- changes tab */
+
+  function changesTab(d) {
+    return h("div", {},
+      h("p", { class: "tabnote" }, "The hardware difference between the two revisions, read " +
+        "from the manifests — not a text diff of the files."),
+      diffColumn(d));
+  }
 
   function diffColumn(d) {
-    const col = h("div", {});
+    const col = h("div", { class: "grid-halves" });
     const EMPTY = [];
     const b = Object.assign({ replaced: EMPTY, value_changed: EMPTY, added: EMPTY,
       removed: EMPTY, count_changes: EMPTY }, d.bom);
@@ -419,7 +632,7 @@
     const skipped = [];
 
     if (b.replaced.length) {
-      col.append(panel("Components replaced", { count: b.replaced.length, flush: true },
+      col.append(panel("Parts swapped", { count: b.replaced.length, flush: true },
         table(["Ref", "From", "To", "Changed fields"], b.replaced.map((x) =>
           h("tr", {},
             h("td", { class: "m" }, x.ref),
@@ -428,7 +641,7 @@
             h("td", {}, h("span", { class: "new" }, x.new.value),
               h("div", { class: "mono", style: "color:var(--fg-faint)" }, x.new.mpn || "—")),
             h("td", {}, refChips(x.changed_fields)))))));
-    } else { skipped.push("replacements"); }
+    } else { skipped.push("part swaps"); }
 
     if (b.value_changed.length) {
       col.append(panel("Values changed", { count: b.value_changed.length, flush: true },
@@ -439,7 +652,7 @@
     } else { skipped.push("value edits"); }
 
     if (b.added.length || b.removed.length) {
-      col.append(panel("Components added / removed",
+      col.append(panel("Parts added or removed",
         { count: b.added.length + b.removed.length, flush: true },
         table(["", "Ref", "Value"], [
           b.added.map((x) => h("tr", {}, h("td", { class: "m new" }, "+"),
@@ -447,10 +660,11 @@
           b.removed.map((x) => h("tr", {}, h("td", { class: "m old" }, "−"),
             h("td", { class: "m" }, x.ref), h("td", {}, x.value))),
         ])));
-    } else { skipped.push("additions/removals"); }
+    } else { skipped.push("additions or removals"); }
 
     if (p.footprint_changes.length) {
-      col.append(panel("Form factor / slot changes", { count: p.footprint_changes.length, flush: true },
+      col.append(panel("Slot / form factor changes",
+        { count: p.footprint_changes.length, flush: true },
         table(["Ref", "From → To"], p.footprint_changes.map((x) =>
           h("tr", {}, h("td", { class: "m" }, x.ref),
             h("td", { class: "m" }, h("div", { class: "old" }, x.old),
@@ -475,14 +689,14 @@
         (x.added_refs || []).concat(x.removed_refs || []).join(" ")]),
     ].flat();
     if (netRows.length) {
-      col.append(panel("Connections", { count: netRows.length, flush: true },
+      col.append(panel("Power & data connections", { count: netRows.length, flush: true },
         table(["", "Connection", "Components"], netRows.map((r) =>
           h("tr", {}, h("td", { class: "m" }, r[0]), h("td", { class: "m" }, r[1]),
             h("td", { class: "m" }, r[2]))))));
     } else { skipped.push("connection changes"); }
 
     if (b.count_changes.length) {
-      col.append(panel("Line-item quantities", { count: b.count_changes.length, flush: true },
+      col.append(panel("How many of each part", { count: b.count_changes.length, flush: true },
         table(["Value", "Form factor", "Was", "Now"], b.count_changes.map((x) =>
           h("tr", {}, h("td", { class: "m" }, x.value),
             h("td", { class: "m", style: "color:var(--fg-faint)" }, x.footprint),
@@ -506,60 +720,52 @@
             h("div", { class: "new", title: x.new_hash }, "→ " + shortHash(x.new_hash, 16))))),
       ])));
 
+    const wrap = h("div", {}, col);
     if (skipped.length) {
-      col.append(h("p", { class: "empty" }, "No " + skipped.join(", ") + " in this change."));
+      wrap.append(h("p", { class: "empty" }, "No " + skipped.join(", ") + " in this change."));
     }
-    return col;
+    return wrap;
   }
 
-  /* ------------------------------------------------------- impact column */
+  /* -------------------------------------------------------- evidence tab */
 
-  function impactColumn(rep) {
+  function evidenceTab(rep, vcmp) {
     const by = rep.summary.by_class || {};
-    const legend = panel("How to read a finding", {
+    const legend = panel("What the three labels mean", {
       extra: h("span", { class: "count" },
         "LLM provider: " + (rep.provider || "none") +
         (rep.provider === "none" ? " · fully offline" : "")),
-    }, h("div", { class: "legend" }, CONF_ORDER.map((c) =>
-      h("div", { class: "lcard " + c },
-        h("span", { class: "cchip " + c }, cmark(c), CONF[c].label + " · " + (by[c] || 0)),
-        h("p", {}, CONF[c].blurb),
-        h("span", { class: "never" }, CONF[c].never)))));
+    },
+      h("p", { class: "tabnote", style: "margin:0 0 10px" },
+        "Every finding carries exactly one of these. It says how much VCM actually knows — " +
+        "not how sure it feels."),
+      h("div", { class: "legend" }, CONF_ORDER.map((c) =>
+        h("div", { class: "lcard " + c },
+          h("span", { class: "cchip " + c }, cmark(c), CONF[c].label + " · " + (by[c] || 0)),
+          h("p", {}, CONF[c].blurb),
+          h("span", { class: "never" }, CONF[c].never)))));
 
-    const bands = CONF_ORDER.map((c) => {
-      const items = rep.findings
-        .filter((f) => f.confidence_class === c)
-        .sort((x, y) => SEV_RANK[x.severity] - SEV_RANK[y.severity]);
-      return h("section", { class: "band " + c },
-        h("header", {},
-          h("span", { class: "cchip " + c }, cmark(c, 13), CONF[c].label),
-          h("span", { class: "count" }, plural(items.length, "finding")),
-          h("span", { class: "blurb" }, CONF[c].blurb)),
-        h("div", { class: "findings" }, items.length
-          ? items.map(findingRow)
-          : h("p", { class: "empty", style: "padding:10px 12px" }, "No findings in this class.")));
-    });
+    const checks = vcmp
+      ? panel("Design checks", { count: vcmp.status.from + " → " + vcmp.status.to },
+          h("p", { class: "tabnote", style: "margin:0" },
+            vcmp.regression
+              ? "A check that passed before now fails. That is a regression introduced by this change."
+              : "No check that passed before fails now."))
+      : null;
 
-    return h("div", {},
-      panel("Impact", {
-        count: plural(rep.findings.length, "finding"),
-        extra: h("span", { class: "count" },
-          CONF_ORDER.map((c) => (by[c] || 0)).join(" / ") + " by class"),
-      }, h("div", {}, bands)),
-      catalogPanel(rep.catalog),
-      legend);
+    return h("div", {}, legend, catalogPanel(rep.catalog), checks);
   }
 
   /* Catalog coverage: how much of this change the component catalog actually knows.
      Rendered from whatever buckets the payload carries, so it survives a change of
      domain or of bucket names. */
   const BUCKET = {
-    known: "In the catalog",
-    unknown: "Not in the catalog",
-    declared: "Declared in the project",
+    known: "VCM has data for these",
+    unknown: "VCM has no data for these",
+    declared: "Described in the project file",
     passive: "No catalog entry needed",
-    unreviewed: "Catalog values not human-reviewed",
-    reviewed_refs: "Catalog values human-reviewed",
+    unreviewed: "Catalog values nobody has checked",
+    reviewed_refs: "Catalog values a human checked",
   };
 
   function catalogPanel(cat) {
@@ -570,53 +776,32 @@
       .map(([k, v]) => h("div", { style: "margin-bottom:7px" },
         h("div", { class: "l", style: "font:600 10.5px/1.4 var(--mono);letter-spacing:.08em;" +
           "text-transform:uppercase;color:var(--fg-faint)" },
-          (BUCKET[k] || k.replace(/_/g, " ")) + " \u00b7 " + v.length),
+          (BUCKET[k] || k.replace(/_/g, " ")) + " · " + v.length),
         v.length
           ? h("div", { class: "refs" }, v.map((r) => h("span", { class: "ref" }, r)))
           : h("span", { class: "no-ev" }, "none")));
 
     const layers = cat.layers
-      ? table(["Catalog layer", "Entries"], Object.entries(cat.layers).sort().map(([k, v]) =>
-          h("tr", {}, h("td", { class: "m" }, k), h("td", { class: "num" }, v))))
+      ? h("details", { class: "morestats" }, h("summary", {}, "Where the catalog comes from"),
+          table(["Catalog layer", "Entries"], Object.entries(cat.layers).sort().map(([k, v]) =>
+            h("tr", {}, h("td", { class: "m" }, k), h("td", { class: "num" }, v)))))
       : null;
 
-    return panel("Catalog coverage", {
+    return panel("What VCM has data for", {
       count: cat.considered !== undefined && pct !== null
-        ? pct + "% of " + plural(cat.considered, "changed component")
+        ? pct + "% of " + plural(cat.considered, "changed part")
         : null,
       extra: h("span", { class: "count" },
         plural(cat.parts || cat.parts_in_catalog || 0, "entry", "entries") + " loaded"),
     },
-      h("p", { class: "fdetail", style: "margin:0 0 9px" },
-        "A rule-based finding can only fire on a component the catalog knows. " +
+      h("p", { class: "tabnote", style: "margin:0 0 9px" },
+        "A rule can only fire on a part VCM has data for. " +
         (cat.reviewed !== undefined && cat.parts
-          ? cat.reviewed + " of " + cat.parts + " catalog entries have been checked against " +
-            "a datasheet by a human, so treat the rest as prompts to verify, not conclusions."
-          : "Entries that nobody has checked against a datasheet are prompts to verify.")),
+          ? cat.reviewed + " of " + cat.parts + " entries have been checked against a datasheet " +
+            "by a human, so treat the rest as prompts to verify, not conclusions."
+          : "Entries nobody has checked against a datasheet are prompts to verify.")),
       h("div", {}, buckets),
       layers);
-  }
-
-  function findingRow(f) {
-    return h("article", { class: "finding " + f.confidence_class + " sev-" + f.severity },
-      h("div", { class: "fhead" },
-        schip(f.severity),
-        h("span", { class: "fid" }, f.id),
-        h("span", { class: "ftitle" }, f.title),
-        cchip(f.confidence_class)),
-      f.detail ? h("p", { class: "fdetail" }, f.detail) : null,
-      refChips(f.refs, traceRef),
-      evidenceBlock(f.evidence));
-  }
-
-  function retestPanel(rep) {
-    const rows = (rep.required_retests || []).map((t) =>
-      h("tr", {},
-        h("td", { class: "m" }, t.name),
-        h("td", {}, cchip(t.confidence_class)),
-        h("td", {}, t.reason, evidenceBlock(t.evidence, "Evidence"))));
-    return panel("Required re-tests", { count: (rep.required_retests || []).length, flush: true },
-      rows.length ? table(["Test", "Confidence", "Why"], rows) : empty("None."));
   }
 
   function traceRef(ref) {

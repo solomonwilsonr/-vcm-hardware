@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="VCM Machines">
+  <title>VCM Machines</title>
+  <!-- The mark is a knockout, so it flips with the viewer's theme and stays visible on a dark
+       browser tab as well as a light one. -->
+  <style>
+    .tile { fill: #000000 } .ink { fill: #ffffff }
+    @media (prefers-color-scheme: dark) { .tile { fill: #f4f4f2 } .ink { fill: #141414 } }
+  </style>
+  <rect width="100" height="100" rx="5" class="tile"/>
+  <g transform="skewX(-35)" class="ink">
+    <path d="M83.5 23H103.5A5.5 5.5 0 0 1 109 28.5V34.7A5.5 5.5 0 0 1 103.5 40.2H86A3 3 0 0 0 83 43.2V51.9A5.5 5.5 0 0 1 77.5 57.4H58.5A5.5 5.5 0 0 1 53 51.9V45.7A5.5 5.5 0 0 1 58.5 40.2H75A3 3 0 0 0 78 37.2V28.5A5.5 5.5 0 0 1 83.5 23Z"/>
+    <path d="M96 45.2H116A5.5 5.5 0 0 1 121.5 50.7V56.9A5.5 5.5 0 0 1 116 62.4H98.5A3 3 0 0 0 95.5 65.4V74.1A5.5 5.5 0 0 1 90 79.6H71A5.5 5.5 0 0 1 65.5 74.1V67.9A5.5 5.5 0 0 1 71 62.4H87.5A3 3 0 0 0 90.5 59.4V50.7A5.5 5.5 0 0 1 96 45.2Z"/>
+  </g>
+</svg>

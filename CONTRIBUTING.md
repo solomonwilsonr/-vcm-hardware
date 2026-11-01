@@ -9,7 +9,7 @@ python3 -m venv .venv && . .venv/bin/activate
 make install        # pip install -e ".[dev]"
 make test           # pytest
 make lint           # ruff
-make demo           # end-to-end demo on examples/sample-pcb
+make demo           # end-to-end demo on examples/gpu-node
 ```
 
 Python 3.11+. The core packages use only the standard library; FastAPI/httpx are needed only for `services/api` and its tests.

@@ -1,4 +1,22 @@
-# VCM — Version Control for Hardware
+<p align="center">
+  <img src="docs/assets/logo.svg" alt="VCM logo" width="96" height="96">
+</p>
+
+<h1 align="center">VCM — Version Control for Hardware</h1>
+
+<p align="center">
+  Semantic diffs · Evidence-backed impact · Physical fleet traceability
+</p>
+
+<p align="center">
+  <a href="#quickstart">Get started</a> ·
+  <a href="#visual-tour">Visual tour</a> ·
+  <a href="docs/architecture.md">Architecture</a> ·
+  <a href="docs/hackathon.md">Hackathon</a> ·
+  <a href="CONTRIBUTING.md">Contribute</a>
+</p>
+
+<p align="center"><strong>Python 3.11+ · Apache-2.0 · Working MVP · Offline core</strong></p>
 
 **Every hardware change has a blast radius. VCM makes it traceable.**
 
@@ -22,6 +40,14 @@ It is built around three questions:
 > **Status: working MVP, honest scope.** Everything marked *Implemented* below runs and is covered
 > by tests in this repository. Everything marked *Planned* does not exist yet. See
 > [Limitations](#limitations).
+
+## Explore the documentation
+
+- [Quickstart](#quickstart) — install, compare two revisions and open the dashboard.
+- [Hardware workflows](#work-with-your-own-hardware) — inventory, signing, fleet, sync and agents.
+- [Appwrite](#what-lives-in-appwrite-and-why) — shared fleet, semantic search and graph storage.
+- [Feature status](#modules-implemented-vs-planned) · [Confidence classes](#confidence-classes) · [Limitations](#limitations).
+- [Architecture](docs/architecture.md) · [Data model](docs/data-model.md) · [Roadmap](docs/roadmap.md) · [Demo script](docs/demo-script.md).
 
 ## The demo in one paragraph
 
@@ -47,46 +73,117 @@ older than the one declared. The fleet commands say which racks go over budget i
 old release is upgraded, and plan the rollout in waves of at most one unit per rack, holding back
 every unit whose change still has critical findings.
 
-## Modules: implemented vs planned
+## Visual tour
 
-| # | Module | Location | Status |
-|---|--------|----------|--------|
-| 1 | Content-addressed object store, snapshots, branches, tags, commit/log/checkout/diff, evidence store | `packages/core` | **Implemented** |
-| 2 | Hash-chained audit log of every state change | `packages/core` (`vcm_core.audit`) | **Implemented** |
-| 3 | Ed25519 signing of releases and unit passports, trust database | `packages/core` (`vcm_core.signing`) | **Implemented** in pure Python (RFC 8032 vectors tested) |
-| 4 | Remotes (shared directory), push/fetch/pull, file locks | `packages/core` (`vcm_core.remote`) | **Implemented**, fast-forward only by design. No S3 or Git transport |
-| 5 | Input parsers: node manifests (`*.node.json`), KiCad `.kicad_sch`/`.kicad_pcb`, BOM CSV | `packages/file-parsers` | **Implemented**. Node manifests are the primary format; the board parsers are retained from VCM's origin and still work |
-| 6 | Observed inventory: Redfish captures, `nvidia-smi` CSV/XML, manifest drafting | `packages/file-parsers` (`vcm_parsers.inventory`) | **Implemented** against saved captures and a synthetic sample. Live Redfish capture exists but has **not been run against a real BMC** here |
-| 7 | Semantic diff engine, and drift (manifest vs machine) | `packages/diff-engine` | **Implemented** |
-| 8 | Engineering dependency graph | `services/engineering-graph` | **Implemented**, with two interchangeable backends: local SQLite and **Appwrite TablesDB** for a shared fleet-wide store |
-| 9 | Impact analysis | `services/ai-engine` | **Implemented** as a deterministic rule engine over a component catalog. Node rules: power budget under redundancy policy, chassis cooling, PCIe generation and lanes, driver/CUDA/BIOS/BMC minimums, power connector, DDR generation, DIMM mixing and channel population, socket fit and mixed CPUs, mixed accelerators on one fabric, NIC vs fabric speed, slot count, and measured draw from attached observations. LLM provider interface exists with a no-op default; no real LLM provider ships |
-| 10 | Rule plugins for site-specific checks | `services/ai-engine` (`vcm_ai.plugins`) | **Implemented**. Plugins cannot emit `verified` findings; a crashing plugin becomes a finding |
-| 11 | Component catalog | `services/ai-engine` | **Implemented**: 90 parts across layers, user and project overrides, JSON/CSV import, per-field source attribution, review worksheets ranked by what your units use, and a trust figure on every report. **No bundled part is reviewed** |
-| 11b | Semantic part search | `services/ai-engine` (`vcm_ai.semantic`) | **Implemented** on **Appwrite VectorsDB**: the catalog is embedded and searched by meaning, then every candidate is checked against catalog facts and labelled `drop_in`/`check`/`incompatible`. Tested offline against a fake embedding and vector service; **not run against a live VectorsDB** |
-| 12 | Validation | `services/validation` | **Implemented**: built-in checks plus an optional `kicad-cli` wrapper for the board domain (skipped when absent) |
-| 13 | Release manifests, verification, rollback planner | `packages/workflow` | **Implemented** (JSON/YAML manifest, re-hash verification, signatures, policy record) |
-| 14 | Policies as code (`vcm-policy.json`) gating checks, reviews, releases and verification | `packages/workflow` (`vcm_workflow.policy`) | **Implemented** |
-| 15 | Physical traceability: unit registry, signed passports, QR | `services/traceability` | **Implemented**. The unit registry is **Appwrite TablesDB** when configured, so one fleet is shared by every machine; local JSON is the offline cache. Pure-Python QR encoder |
-| 16 | Fleet: racks, placement, queries, recalls, rack power, rollout waves, NetBox import | `services/traceability` (`vcm_trace.fleet`, `vcm_trace.fleet_store`, `vcm_trace.netbox`) | **Implemented**. Racks and placement share the fleet store; writes fail closed, reads fall back to the cache and say so. NetBox import tested against saved API JSON, **not against a live NetBox** |
-| 17 | Change review records | `packages/workflow` | **Partial**: diff, impact, validation, comments, approvals, policy-aware readiness, identity via API tokens. No merge action |
-| 18 | Time machine (`timeline`, `explain`) | `packages/workflow` | **Implemented** |
-| 19 | CLI, REST API, dashboard | `packages/vcm-cli`, `services/api` | **Implemented**. The API requires a token (roles: viewer, editor, approver, admin) and refuses to start without one unless `--insecure`. The dashboard's **Setup** page draws every part of a node, the domains they share, the attached machine capture, and the units and racks, and re-reads the repository every 5 s ("live" means polling the repository, **not** telemetry from machines: machine data appears only where a capture was attached with `vcm drift --attach`) |
-| 20 | Agent access: MCP server (stdio, offline) with read-only tools and a propose-then-human-approves write path | `services/mcp-server` (`vcm_mcp`) | **Implemented**. Tested over a real stdio subprocess; **not yet exercised with a live agent client**. The dashboard's **Agents** page lists proposals and lets a signed-in approver approve or reject them (the API refuses agents, the proposer and unauthenticated callers) |
-| 21 | Agent honesty: claim checker (`vcm_check_claims`) and evals (`vcm eval`) | `vcm_ai.claims`, `vcm_mcp.evals` | **Implemented**. Evals have been run only against reference answerers (one honest, five deliberately flawed), **never against a live model** |
-| 22 | Integrations and apps: KiCad plugin, FreeCAD, Git bridge, web app, desktop app | `integrations/`, `apps/` | **Planned**: README stubs only |
+![Animated VCM tour: hardware comparison, impact findings, dependency graph and fleet overview](docs/assets/vcm-tour.gif)
+
+An 18-second, silent preview made from existing page captures with camera movement.
+The comparison screen is the running dashboard; graph and fleet scenes are landing-page
+illustrations. This is an edited tour, not a recording of live telemetry.
+
+### Compare revisions and inspect the evidence
+
+![VCM dashboard comparing A100 and H100 revisions, showing a critical power finding and confidence labels](docs/assets/dashboard-compare.jpg)
+
+The dashboard brings the revision pair, changed components, impact severity, catalog trust and
+confidence classes into one view. This captured demo includes attached machine observations;
+its finding counts differ from the declaration-only CLI example above.
+
+<details>
+<summary><strong>See the landing page</strong></summary>
+
+![VCM landing page introducing version control for hardware](docs/assets/landing-page.jpg)
+
+The landing page introduces the product. Run it separately with
+`python3 -m http.server 8080 --directory site`, then open <http://127.0.0.1:8080>.
+The authenticated dashboard is served by `vcm serve` below.
+
+</details>
+
+See [media sources and regeneration instructions](docs/assets/README.md).
 
 ## Quickstart
 
-Requires Python 3.11+. The core has no third-party dependencies; the API needs FastAPI, and the
-shared fleet, semantic part search and shared graph need the Appwrite SDK (`pip install -e
-'.[appwrite]'`). Without Appwrite credentials everything runs against the checkout.
+### 1. Clone and install
+
+Requires **Python 3.11+**. These commands use a macOS/Linux shell; the demo scripts also
+require Bash, Make and `sha256sum` (GNU coreutils). The core has no third-party dependencies;
+`.[dev]` installs the API, Appwrite SDK and development tools.
 
 ```bash
-python3 -m venv .venv && . .venv/bin/activate
-make install          # pip install -e ".[dev]"
-make test             # pytest
-make demo             # end-to-end demo on the sample GPU node
+git clone https://github.com/solomonwilsonr/-vcm-hardware.git
+cd -- -vcm-hardware
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+vcm --help
 ```
+
+### 2. Create a sample hardware repository
+
+Run these from the project root. Keep the sample fleet local even if you already have
+Appwrite credentials configured. Choose an empty directory for `my-node`.
+
+```bash
+export VCM_FLEET_LOCAL=1
+mkdir my-node
+cp -R examples/gpu-node/v1.0/. my-node/
+vcm init my-node
+vcm -C my-node commit -m "Baseline: A100 node" --tag v1.0
+cp -R examples/gpu-node/v1.1/. my-node/
+vcm -C my-node commit -m "Proposed upgrade: H100 NVL" --tag v1.1
+vcm -C my-node diff v1.0 v1.1
+vcm -C my-node impact v1.0 v1.1
+```
+
+Expect eight accelerator replacements and findings about power, cooling, firmware and
+connectors. Each finding carries its confidence class and evidence.
+
+### 3. Open the dashboard
+
+```bash
+vcm -C my-node token create demo --role approver
+vcm -C my-node serve --port 8000
+```
+
+Save the token printed by the first command; it is shown only once. Open
+<http://127.0.0.1:8000/#/compare> and paste it into the browser's token prompt.
+Select **v1.0** as the base and **v1.1** as the head, then click **Compare**.
+Stop the server with `Ctrl+C`.
+
+### 4. Run the complete demo and checks
+
+From the project root, with the virtual environment active:
+
+```bash
+make test
+make lint
+make demo
+```
+
+`make demo` adds observed drift, releases, signed unit passports, racks, rollout planning,
+reviews and audit verification. It **recreates `demo-workspace/` on each run** and ends by
+intentionally corrupting a stored blob to prove that release verification detects tampering.
+Use the clean `my-node` repository above for interactive exploration.
+
+### 5. Optional: connect a shared Appwrite fleet
+
+The local walkthrough needs no credentials. To connect a shared fleet, copy
+[`.env.example`](.env.example) to `.env` if you do not already have one, fill in your
+endpoint, project, API key and database ID, then run:
+
+```bash
+unset VCM_FLEET_LOCAL
+vcm fleet health
+vcm fleet provision
+```
+
+The required API-key scopes are documented in `.env.example`. Keep credentials in `.env`;
+never commit them. See [the Appwrite guide below](#what-lives-in-appwrite-and-why) for
+semantic part search and the optional shared graph. `make demo-fleet` demonstrates two
+checkouts sharing the registry and **writes demo units to your configured Appwrite project**.
+
+## Work with your own hardware
 
 On your own node:
 
@@ -402,6 +499,34 @@ live with `prefetch=False`. The test suite asserts that an Appwrite-backed graph
 > the cross-clone duplicate rejection and the stale-cache path. The **VectorsDB path has not been
 > run live**: it needs the `embeddings.write` and `vectors.*` scopes on the API key, and the
 > commands say so when they are missing.
+
+## Modules: implemented vs planned
+
+| # | Module | Location | Status |
+|---|--------|----------|--------|
+| 1 | Content-addressed object store, snapshots, branches, tags, commit/log/checkout/diff, evidence store | `packages/core` | **Implemented** |
+| 2 | Hash-chained audit log of every state change | `packages/core` (`vcm_core.audit`) | **Implemented** |
+| 3 | Ed25519 signing of releases and unit passports, trust database | `packages/core` (`vcm_core.signing`) | **Implemented** in pure Python (RFC 8032 vectors tested) |
+| 4 | Remotes (shared directory), push/fetch/pull, file locks | `packages/core` (`vcm_core.remote`) | **Implemented**, fast-forward only by design. No S3 or Git transport |
+| 5 | Input parsers: node manifests (`*.node.json`), KiCad `.kicad_sch`/`.kicad_pcb`, BOM CSV | `packages/file-parsers` | **Implemented**. Node manifests are the primary format; the board parsers are retained from VCM's origin and still work |
+| 6 | Observed inventory: Redfish captures, `nvidia-smi` CSV/XML, manifest drafting | `packages/file-parsers` (`vcm_parsers.inventory`) | **Implemented** against saved captures and a synthetic sample. Live Redfish capture exists but has **not been run against a real BMC** here |
+| 7 | Semantic diff engine, and drift (manifest vs machine) | `packages/diff-engine` | **Implemented** |
+| 8 | Engineering dependency graph | `services/engineering-graph` | **Implemented**, with two interchangeable backends: local SQLite and **Appwrite TablesDB** for a shared fleet-wide store |
+| 9 | Impact analysis | `services/ai-engine` | **Implemented** as a deterministic rule engine over a component catalog. Node rules: power budget under redundancy policy, chassis cooling, PCIe generation and lanes, driver/CUDA/BIOS/BMC minimums, power connector, DDR generation, DIMM mixing and channel population, socket fit and mixed CPUs, mixed accelerators on one fabric, NIC vs fabric speed, slot count, and measured draw from attached observations. LLM provider interface exists with a no-op default; no real LLM provider ships |
+| 10 | Rule plugins for site-specific checks | `services/ai-engine` (`vcm_ai.plugins`) | **Implemented**. Plugins cannot emit `verified` findings; a crashing plugin becomes a finding |
+| 11 | Component catalog | `services/ai-engine` | **Implemented**: 90 parts across layers, user and project overrides, JSON/CSV import, per-field source attribution, review worksheets ranked by what your units use, and a trust figure on every report. **No bundled part is reviewed** |
+| 11b | Semantic part search | `services/ai-engine` (`vcm_ai.semantic`) | **Implemented** on **Appwrite VectorsDB**: the catalog is embedded and searched by meaning, then every candidate is checked against catalog facts and labelled `drop_in`/`check`/`incompatible`. Tested offline against a fake embedding and vector service; **not run against a live VectorsDB** |
+| 12 | Validation | `services/validation` | **Implemented**: built-in checks plus an optional `kicad-cli` wrapper for the board domain (skipped when absent) |
+| 13 | Release manifests, verification, rollback planner | `packages/workflow` | **Implemented** (JSON/YAML manifest, re-hash verification, signatures, policy record) |
+| 14 | Policies as code (`vcm-policy.json`) gating checks, reviews, releases and verification | `packages/workflow` (`vcm_workflow.policy`) | **Implemented** |
+| 15 | Physical traceability: unit registry, signed passports, QR | `services/traceability` | **Implemented**. The unit registry is **Appwrite TablesDB** when configured, so one fleet is shared by every machine; local JSON is the offline cache. Pure-Python QR encoder |
+| 16 | Fleet: racks, placement, queries, recalls, rack power, rollout waves, NetBox import | `services/traceability` (`vcm_trace.fleet`, `vcm_trace.fleet_store`, `vcm_trace.netbox`) | **Implemented**. Racks and placement share the fleet store; writes fail closed, reads fall back to the cache and say so. NetBox import tested against saved API JSON, **not against a live NetBox** |
+| 17 | Change review records | `packages/workflow` | **Partial**: diff, impact, validation, comments, approvals, policy-aware readiness, identity via API tokens. No merge action |
+| 18 | Time machine (`timeline`, `explain`) | `packages/workflow` | **Implemented** |
+| 19 | CLI, REST API, dashboard | `packages/vcm-cli`, `services/api` | **Implemented**. The API requires a token (roles: viewer, editor, approver, admin) and refuses to start without one unless `--insecure`. The dashboard's **Setup** page draws every part of a node, the domains they share, the attached machine capture, and the units and racks, and re-reads the repository every 5 s ("live" means polling the repository, **not** telemetry from machines: machine data appears only where a capture was attached with `vcm drift --attach`) |
+| 20 | Agent access: MCP server (stdio, offline) with read-only tools and a propose-then-human-approves write path | `services/mcp-server` (`vcm_mcp`) | **Implemented**. Tested over a real stdio subprocess; **not yet exercised with a live agent client**. The dashboard's **Agents** page lists proposals and lets a signed-in approver approve or reject them (the API refuses agents, the proposer and unauthenticated callers) |
+| 21 | Agent honesty: claim checker (`vcm_check_claims`) and evals (`vcm eval`) | `vcm_ai.claims`, `vcm_mcp.evals` | **Implemented**. Evals have been run only against reference answerers (one honest, five deliberately flawed), **never against a live model** |
+| 22 | Integrations and apps: KiCad plugin, FreeCAD, Git bridge, web app, desktop app | `integrations/`, `apps/` | **Planned**: README stubs only |
 
 ## Confidence classes
 

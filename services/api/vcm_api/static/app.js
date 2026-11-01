@@ -467,9 +467,10 @@
         ? plural(warn, "thing") + " to look at. None of them blocks the build."
         : "Nothing in the design data links this change to a problem.";
 
-    const top = impact.findings
-      .filter((f) => f.severity === (crit ? "critical" : "warning"))
-      .slice(0, 3);
+    const shown = impact.findings
+      .filter((f) => f.severity === (crit ? "critical" : "warning"));
+    const top = shown.slice(0, 4);
+    const rest = shown.length - top.length;
 
     const by = impact.summary.by_class || {};
     return h("div", { class: "verdict " + tone },
@@ -484,7 +485,10 @@
                 h("button", { class: "vjump", type: "button",
                   title: "Show this finding and its evidence",
                   onclick: () => focusFinding(f.id) }, f.title),
-                cchip(f.confidence_class))))
+                cchip(f.confidence_class))),
+              rest > 0
+                ? h("li", { class: "dim" }, "and " + rest + " more below")
+                : null)
           : null,
         h("div", { class: "vmeta" },
           h("span", { class: "dim" }, "Evidence behind the " +
@@ -542,7 +546,7 @@
         stat(d.replaced + d.value_changed, "components changed"),
         stat(impact.findings.length, "things it affects"),
         stat(sev.critical || 0, "must fix first", sev.critical ? "bad" : "ok"),
-        stat(cat, "of changed parts VCM has data for")),
+        stat(cat, "changed parts VCM has data for")),
       more);
   }
 
@@ -595,6 +599,14 @@
         onclick: () => { S.cmp.tab = "evidence"; drawCompare(); } }, "What do these mean?"));
   }
 
+  /* What each severity means for the reader, in the heading rather than in a
+     legend they have to go and find. */
+  const SEV_SUB = {
+    critical: "These block the build.",
+    warning: "Not blocking. Somebody should look before this ships.",
+    info: "Context. Nothing here asks you to do anything.",
+  };
+
   function drawFindings(rep) {
     const box = S.ui.flist;
     if (!box) return;
@@ -608,23 +620,47 @@
       mount(box, empty("Nothing matches that filter."));
       return;
     }
-    mount(box, h("div", { class: "flist" }, items.map(findingRow)));
+    /* One list per severity. Twenty-one findings in a single column read as a
+       wall; three short labelled lists read as three questions. */
+    mount(box, SEV_FILTERS.map((sv) => {
+      const group = items.filter((f) => f.severity === sv.id);
+      if (!group.length) return null;
+      return findingGroup(sv.id, group);
+    }));
+  }
+
+  function findingGroup(sev, group) {
+    const list = h("div", { class: "flist" },
+      group.map((f, i) => findingRow(f, sev === "critical" && i === 0)));
+    const toggle = h("button", { class: "gtoggle", type: "button",
+      onclick: () => {
+        const rows = list.querySelectorAll("details.finding");
+        const openAll = ![].every.call(rows, (r) => r.open);
+        [].forEach.call(rows, (r) => { r.open = openAll; });
+        toggle.textContent = openAll ? "Collapse all" : "Expand all";
+      } }, "Expand all");
+    return h("section", { class: "fgroup sev-" + sev },
+      h("div", { class: "ghead" },
+        h("h3", {}, SEV_LABEL[sev] + " \u00b7 " + group.length),
+        h("span", { class: "gsub" }, SEV_SUB[sev] || ""),
+        group.length > 1 ? toggle : null),
+      list);
   }
 
   /* A finding is one line until the reader opens it. Blockers open themselves:
      those are the ones somebody has to act on. */
-  function findingRow(f) {
+  function findingRow(f, open) {
     return h("details", {
       class: "finding " + f.confidence_class + " sev-" + f.severity,
       id: "f-" + f.id,
-      open: f.severity === "critical",
+      open: !!open,
     },
       h("summary", {},
         schip(f.severity),
         h("span", { class: "ftitle" }, f.title),
         cchip(f.confidence_class),
         f.refs && f.refs.length
-          ? h("span", { class: "fid mono" }, plural(f.refs.length, "part"))
+          ? h("span", { class: "fparts" }, plural(f.refs.length, "part"))
           : null),
       h("div", { class: "fbody" },
         f.detail ? h("p", { class: "fdetail" }, f.detail) : null,

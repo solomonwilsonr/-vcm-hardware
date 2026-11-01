@@ -485,10 +485,14 @@ verified. It is a floor, not a census: a rule may use inputs it does not cite in
 - **The catalog is small and unreviewed.** 90 parts, none datasheet-verified by a human. Rules are
   heuristics and can be wrong or incomplete. VCM discloses what it does not know; it cannot
   disclose what it has wrong.
-- Observed-inventory parsing is tested against a **synthetic** Redfish capture (and `tests/captures/`
-  is where real, scrubbed ones go; none has been contributed yet) and `nvidia-smi`
-  output written for the demo. BMC implementations vary; the live Redfish fetcher and the NetBox
-  fetcher have not been run against real services here.
+- Observed-inventory parsing is tested against a **synthetic** Redfish capture, and against
+  **real** `nvidia-smi` output from an NVIDIA GB10 (DGX Spark), which is pinned as a fixture in
+  `tests/test_real_hardware_gaps.py`. That first contact with real hardware found three bugs the
+  synthetic fixtures could not: the scrubber treated the `[N/A]` a real card reports as an
+  identity, `inventory doctor` called a capture complete when the machine had answered neither
+  serial nor power limit, and a firmware-only change produced no diff at all. No sealed folder has
+  been contributed to `tests/captures/` yet. BMC implementations vary; the live Redfish fetcher and
+  the NetBox fetcher have not been run against real services here.
 - Power and thermal rules use declared and catalog figures. Attached telemetry is a point-in-time
   reading under whatever workload was running, and projecting it onto a new configuration is a
   prediction, labelled as such.

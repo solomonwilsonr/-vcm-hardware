@@ -94,7 +94,9 @@ its finding counts differ from the declaration-only CLI example above.
 
 ![VCM landing page introducing version control for hardware](docs/assets/landing-page.jpg)
 
-The landing page introduces the product. Run it separately with
+The landing page introduces the product. It is deployed at
+<http://vcm-site-061664787595.s3-website-us-east-1.amazonaws.com> (S3 static hosting; HTTPS via
+CloudFront is pending AWS account verification). Run it locally with
 `python3 -m http.server 8080 --directory site`, then open <http://127.0.0.1:8080>.
 The authenticated dashboard is served by `vcm serve` below.
 

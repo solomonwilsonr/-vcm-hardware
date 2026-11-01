@@ -241,10 +241,21 @@ def _csv_key(header: str) -> str:
 NVSMI_COLUMNS = ("index", "name", "serial", "pci.bus_id", "driver_version", "power.draw",
                  "power.limit", "pcie.link.gen.max", "pcie.link.width.max")
 
+#: nvidia-smi prints these when a field does not apply to the card (common on SoC parts such as
+#: GB10, which has no discrete serial and no separately governed power limit)
+NVSMI_UNREPORTED = frozenset({"", "n/a", "[n/a]", "not supported", "[not supported]",
+                              "unknown", "[unknown]", "insufficient permissions",
+                              "[insufficient permissions]"})
+
+
+def unreported(value) -> bool:
+    """True when nvidia-smi said the field does not apply, rather than giving a value."""
+    return str(value or "").strip().lower() in NVSMI_UNREPORTED
+
 
 def _nvsmi_report(rep: dict, fmt: str) -> dict:
     rep.update(source="nvidia-smi", format=fmt, rows=0, columns=[], unread_columns=[],
-               missing_columns=[], gpus=0, unnamed=0, not_covered={})
+               missing_columns=[], null_columns=[], gpus=0, unnamed=0, not_covered={})
     return rep
 
 
@@ -261,9 +272,13 @@ def parse_nvidia_smi_csv(text: str, report: dict | None = None) -> dict:
     rep.update(rows=len(rows) - 1, columns=keys,
                unread_columns=[k for k in keys if k not in NVSMI_COLUMNS],
                missing_columns=[c for c in NVSMI_COLUMNS if c not in keys])
+    data = [dict(zip(keys, (c.strip() for c in row), strict=False)) for row in rows[1:]]
+    # a column the query asked for that no GPU answered: the gap is real and must be reported,
+    # not left to look like a value VCM simply chose not to use
+    rep["null_columns"] = [k for k in keys if k in NVSMI_COLUMNS and data
+                           and all(unreported(r.get(k)) for r in data)]
     gpu_power: dict[str, list[float]] = {}
-    for row in rows[1:]:
-        rec = dict(zip(keys, (c.strip() for c in row), strict=False))
+    for rec in data:
         idx = rec.get("index", str(len(obs["components"])))
         if rec.get("driver_version"):
             obs["firmware"]["gpu_driver"] = rec["driver_version"]
@@ -275,7 +290,8 @@ def parse_nvidia_smi_csv(text: str, report: dict | None = None) -> dict:
             continue
         obs["components"].append({
             "type": "gpu", "model": rec.get("name", ""), "mpn": "",
-            "serial": rec.get("serial", ""), "slot": rec.get("pci.bus_id", f"GPU{idx}"),
+            "serial": "" if unreported(rec.get("serial")) else rec.get("serial", ""),
+            "slot": rec.get("pci.bus_id", f"GPU{idx}"),
             "props": {k: v for k, v in {
                 "index": idx, "power_limit_w": _num(rec.get("power.limit")),
                 "pcie_gen_max": _num(rec.get("pcie.link.gen.max")),
@@ -318,8 +334,11 @@ def parse_nvidia_smi_xml(text: str, report: dict | None = None) -> dict:
         if draw is not None:
             gpu_power[idx] = [draw]
         obs["components"].append({
-            "type": "gpu", "model": _xt(gpu, "product_name"), "mpn": _xt(gpu, "board_part_number"),
-            "serial": _xt(gpu, "serial"), "slot": gpu.get("id", f"GPU{idx}"),
+            "type": "gpu", "model": _xt(gpu, "product_name"),
+            "mpn": "" if unreported(_xt(gpu, "board_part_number"))
+                   else _xt(gpu, "board_part_number"),
+            "serial": "" if unreported(_xt(gpu, "serial")) else _xt(gpu, "serial"),
+            "slot": gpu.get("id", f"GPU{idx}"),
             "props": {k: v for k, v in {
                 "index": idx, "vbios": _xt(gpu, "vbios_version"),
                 "pcie_gen_max": _num(_xt(gpu, "pci/pci_gpu_link_info/pcie_gen/max_link_gen")),

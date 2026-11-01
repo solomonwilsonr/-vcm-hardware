@@ -45,6 +45,13 @@ PROTECTED_KEYS = {"@odata.type", "model", "partnumber", "sku", "manufacturer", "
 HOST_HINTS = ("ntp", "dns", "domain", "fqdn", "host", "server")
 ADDRESS_HINTS = ("address", "gateway", "dns", "ipv4", "ipv6", "hostname", "host_name", "fqdn")
 MIN_LITERAL = 4
+#: values that mean "the machine did not report this". They are not identities, and learning one
+#: would do two wrong things at once: invent an identifier where there is none, and rewrite every
+#: other field holding the same word (a GPU with no serial usually has no power limit either).
+PLACEHOLDERS = frozenset({
+    "n/a", "[n/a]", "na", "n/a.", "none", "null", "nil", "unknown", "[unknown]", "unspecified",
+    "not supported", "[not supported]", "not available", "[not available]", "not specified",
+    "default string", "to be filled by o.e.m.", "-", "--", "---", "0", "00000000"})
 
 _MAC = re.compile(r"(?<![0-9A-Fa-f:-])(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}(?![0-9A-Fa-f:-])")
 _UUID = re.compile(r"(?<![0-9A-Fa-f-])[0-9A-Fa-f]{8}-(?:[0-9A-Fa-f]{4}-){3}[0-9A-Fa-f]{12}"
@@ -117,6 +124,8 @@ class Scrubber:
     # ---- collecting what is identifying ---------------------------------------------
     def learn(self, value: str, label: str) -> None:
         v = value.strip()
+        if v.lower() in PLACEHOLDERS:
+            return
         if len(v) >= MIN_LITERAL and v not in self.literals:
             self.literals[v] = self.shaped(v, label)
             self._pattern = None

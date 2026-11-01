@@ -20,6 +20,21 @@ def _placement(c: Component) -> dict:
     return {"x": c.x, "y": c.y, "rotation": c.rotation, "layer": c.layer}
 
 
+def _firmware(d: Design) -> dict[str, str]:
+    """Firmware versions declared across a design's nodes, flattened to one key per version.
+
+    ``meta["nodes"]`` is a list: a design may hold several nodes, so the node name qualifies the
+    key whenever there is more than one, and is left off for the common single-node case.
+    """
+    nodes = [n for n in (d.meta.get("nodes") or []) if isinstance(n, dict)]
+    out: dict[str, str] = {}
+    for n in nodes:
+        for k, v in (n.get("firmware") or {}).items():
+            key = k if len(nodes) < 2 else f"{n.get('node') or '?'}:{k}"
+            out[key] = v
+    return out
+
+
 def diff_designs(old: Design, new: Design) -> dict:
     o, n = old.components, new.components
     added = [{"ref": r, **_brief(n[r])} for r in sorted(set(n) - set(o))]
@@ -48,6 +63,13 @@ def diff_designs(old: Design, new: Design) -> dict:
     count_changes = [{"value": k[0], "footprint": k[1], "old": co.get(k, 0), "new": cn.get(k, 0)}
                      for k in sorted(set(co) | set(cn)) if co.get(k, 0) != cn.get(k, 0)]
 
+    # Firmware lives in Design.meta["nodes"], not on a component, so nothing above sees it. A
+    # driver or BIOS revision is one of the main things a fleet tracks, and a diff that stays
+    # silent about it reports "nothing changed" for a real change.
+    fo, fn = _firmware(old), _firmware(new)
+    fw_changes = [{"key": k, "old": fo.get(k) or "", "new": fn.get(k) or ""}
+                  for k in sorted(set(fo) | set(fn)) if fo.get(k) != fn.get(k)]
+
     no, nn = old.nets, new.nets
     net_changes = []
     for net in sorted(set(no) & set(nn)):
@@ -69,11 +91,12 @@ def diff_designs(old: Design, new: Design) -> dict:
                     "value_changed": len(value_changed), "footprint_changed": len(fp_changes),
                     "moved": len(moved), "count_changes": len(count_changes),
                     "nets_added": len(nets_added), "nets_removed": len(nets_removed),
-                    "nets_changed": len(net_changes)},
+                    "nets_changed": len(net_changes), "firmware_changed": len(fw_changes)},
         "bom": {"added": added, "removed": removed, "replaced": replaced,
                 "value_changed": value_changed, "count_changes": count_changes},
         "pcb": {"footprint_changes": fp_changes, "moved": moved},
         "nets": {"added": nets_added, "removed": nets_removed, "changed": net_changes},
+        "firmware": fw_changes,
         "changed_refs": sorted(touched),
     }
 
@@ -98,7 +121,13 @@ def render_text(d: dict) -> str:
     if not any(s.values()):
         L.append("No semantic hardware changes.")
         return "\n".join(L)
-    L.append("BOM:")
+    if d.get("firmware"):
+        L.append("Firmware:")
+        for x in d["firmware"]:
+            L.append(f"  {x['key']}: {x['old'] or '(none)'} -> {x['new'] or '(none)'}")
+    if any(d["bom"][k] for k in ("added", "removed", "replaced", "value_changed",
+                                 "count_changes")):
+        L.append("BOM:")
     for x in d["bom"]["added"]:
         L.append(f"  + {x['ref']}  {x['value']}  ({x['footprint']})")
     for x in d["bom"]["removed"]:

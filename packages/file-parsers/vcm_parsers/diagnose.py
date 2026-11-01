@@ -115,6 +115,11 @@ def doctor(redfish: str | dict | None = None, nvidia_smi: str | None = None) -> 
             elif rep["missing_columns"] and rep["format"] == "csv":
                 warnings.append("nvidia-smi columns not in the query, so not used: "
                                 + ", ".join(rep["missing_columns"]))
+            if rep.get("null_columns"):
+                warnings.append("the machine reported no value for: "
+                                + ", ".join(rep["null_columns"])
+                                + ". Checks that read those fields did not run; this is a gap "
+                                  "in what the machine told VCM, not a clean result.")
             if rep["unread_columns"]:
                 warnings.append("nvidia-smi columns VCM does not read: "
                                 + ", ".join(rep["unread_columns"]))

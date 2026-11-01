@@ -149,6 +149,14 @@ def _verified_diff_findings(b: _Builder, d: dict) -> None:
     for x in d["bom"]["value_changed"]:
         b.add(VERIFIED, "info", f"{x['ref']} value changed: {x['old_value']} -> {x['new_value']}",
               "Same part identity, different value.", b.ref_ev(x["ref"]), [x["ref"]])
+    for x in d.get("firmware", []):
+        # Declared in the manifest and read straight back out of it, so this is verified: it
+        # states what the manifest says changed, not what the change will do.
+        b.add(VERIFIED, "warning",
+              f"firmware {x['key']} changed: {x['old'] or '(none)'} -> {x['new'] or '(none)'}",
+              "Declared in the node manifest. Whether the new version meets the minimum for the "
+              "parts fitted is only checked for parts the catalog knows.",
+              [], [])
     for x in d["bom"]["added"]:
         b.add(VERIFIED, "info", f"{x['ref']} added ({x['value']})", x["footprint"],
               b.ref_ev(x["ref"]), [x["ref"]])
